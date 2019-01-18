@@ -1,15 +1,4 @@
 #! /bin/bash
-. /usr/share/modules/init/sh
-
-source deactivate
-
-module purge
-module load cuda/9.0
-module load NCCL/2.2.12-1-cuda.9.0
-module load cudnn/v7.0-cuda.9.0
-module load anaconda3/5.0.1
-
-source activate /private/home/"$USER"/.conda/envs/vcr
 
 BASEDIR=$(dirname $0)/..
 SOURCE="$BASEDIR"/models/train.py
