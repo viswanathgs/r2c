@@ -1,10 +1,11 @@
 #!/bin/bash
 
 # Usage: sbatch launch.sh <BASE_DIR_TO_R2C_SOURCE>
+# Make sure to have run setup_env.sh first to create the environment.
 
 #SBATCH --job-name=r2c
-#SBATCH --output=/checkpoint/%u/r2c/%j/stdout.log
-#SBATCH --error=/checkpoint/%u/r2c/%j/stderr.log
+#SBATCH --output=/checkpoint/%u/logs/r2c-%j.out
+#SBATCH --error=/checkpoint/%u/logs/r2c-%j.err
 #SBATCH --partition=uninterrupted
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -30,7 +31,9 @@ source activate /private/home/"$USER"/.conda/envs/vcr
 BASEDIR=${2:-"/private/home/$USER/projects/r2c"}
 SOURCE="$BASEDIR"/models/train.py
 PARAMS="$BASEDIR"/models/multiatt/default.json
+
 CHECKPOINT_DIR=/checkpoint/$USER/r2c/$SLURM_JOB_ID
+mkdir -p $CHECKPOINT_DIR
 
 echo "Running Job $SLURMD_NODENAME $SLURM_JOB_ID $CUDA_VISIBLE_DEVICES"
 echo "Checkpoint dir: $CHECKPOINT_DIR"
