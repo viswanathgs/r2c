@@ -75,7 +75,7 @@ def _to_gpu(td):
         td[k] = {k2: v.cuda(async=True) for k2, v in td[k].items()} if isinstance(td[k], dict) else td[k].cuda(
             async=True)
     return td
-num_workers = (4 * NUM_GPUS if NUM_CPUS == 32 else 2*NUM_GPUS)-1
+num_workers = (4 * NUM_GPUS if NUM_CPUS >= 32 else 2*NUM_GPUS)-1
 print(f"Using {num_workers} workers out of {NUM_CPUS} possible", flush=True)
 loader_params = {'batch_size': 96 // NUM_GPUS, 'num_gpus':NUM_GPUS, 'num_workers':num_workers}
 train_loader = VCRLoader.from_dataset(train, **loader_params)
@@ -171,7 +171,7 @@ for epoch_num in range(start_epoch, params['trainer']['num_epochs'] + start_epoc
     print("Val epoch {} has acc {:.3f} and loss {:.3f}".format(epoch_num, val_metric_per_epoch[-1], val_loss_avg),
           flush=True)
     if int(np.argmax(val_metric_per_epoch)) < (len(val_metric_per_epoch) - 1 - params['trainer']['patience']):
-        print("Stopping at epoch {:2d}".format(epoch_num))
+        print("Stopping at epoch {:2d}".format(epoch_num), flush=True)
         break
     save_checkpoint(model, optimizer, args.folder, epoch_num, val_metric_per_epoch,
                     is_best=int(np.argmax(val_metric_per_epoch)) == (len(val_metric_per_epoch) - 1))
