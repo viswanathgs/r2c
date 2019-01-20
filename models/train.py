@@ -120,7 +120,7 @@ def main():
     if num_workers is None:
         num_workers = (4 * NUM_GPUS if NUM_CPUS >= 32 else 2*NUM_GPUS)-1
     print(f"Using {num_workers} workers out of {NUM_CPUS} possible", flush=True)
-    # TODO (viswanth): Distributed batch size, lr, checkpoint and restore,
+    # TODO (viswanath): Distributed batch size, lr, checkpoint and restore,
     # validation run
     train_sampler = DistributedSampler(train) if args.distributed else None
     loader_params = {
