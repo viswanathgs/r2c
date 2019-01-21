@@ -8,7 +8,11 @@ import shutil
 # Setting for distributed training.
 import torch.multiprocessing as mp
 if __name__ == '__main__':
-    mp.set_start_method('forkserver')
+    world_size = int(os.environ.get('WORLD_SIZE', 1))
+    if world_size > 1:
+        # NCCL and GLOO backends for distributed training
+        # aren't fork safe
+        mp.set_start_method('forkserver')
 
 import numpy as np
 import pandas as pd
@@ -65,10 +69,6 @@ parser.add_argument(
     action='store_true',
 )
 parser.add_argument(
-    '--world_size', default=1, type=int,
-    help='Number of distributed processes',
-)
-parser.add_argument(
     '--dist_url', default='env://', type=str,
     help='URL used to set up distributed training',
 )
@@ -84,20 +84,18 @@ parser.add_argument(
 def main():
     args = parser.parse_args()
 
-    # Use #nodes as world_size
-    if 'SLURM_NNODES' in os.environ:
-        args.world_size = int(os.environ['SLURM_NNODES'])
-    args.distributed = args.world_size > 1
+    world_size = int(os.environ.get('WORLD_SIZE', 1))
+    args.distributed = world_size > 1
 
     if args.distributed:
         os.environ['RANK'] = os.environ['SLURM_PROCID']
-        os.environ['WORLD_SIZE'] = str(args.world_size)
-        print('Distributed', os.environ['RANK'], os.environ['MASTER_ADDR'],
-              os.environ['MASTER_PORT'], flush=True)
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size)
-        print('Distributed setup: world_size={}, rank={}'.format(
-            args.world_size, os.environ['RANK']), flush=True)
+        print('Distributed setup: world_size={} rank={} master={}:{}'.format(
+            world_size, os.environ['RANK'], os.environ['MASTER_ADDR'],
+            os.environ['MASTER_PORT']), flush=True)
+        dist.init_process_group(
+            backend=args.dist_backend,
+            init_method=args.dist_url,
+            world_size=world_size)
 
     params = Params.from_file(args.params)
     train, val, test = VCR.splits(mode='rationale' if args.rationale else 'answer',
