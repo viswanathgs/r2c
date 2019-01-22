@@ -78,7 +78,11 @@ class VCR(Dataset):
             raise ValueError("split must be answer or rationale")
 
         self.token_indexers = {'elmo': ELMoTokenCharactersIndexer()}
-        self.vocab = Vocabulary()
+        # This makes VCR unpicklable with forkserver start method in
+        # multiprocessing which is needed for NCCL based distributed training.
+        # vocab here is anyway useless as BERT embeddings are precomputed per
+        # dataset instance.
+        # self.vocab = Vocabulary()
 
         # TODO: load COCO
         with open(os.path.join(os.path.dirname(VCR_ANNOTS_DIR), 'dataloaders', 'cocoontology.json'), 'r') as f:
@@ -240,7 +244,7 @@ class VCR(Dataset):
         instance_dict['boxes'] = ArrayField(boxes, padding_value=-1)
 
         instance = Instance(instance_dict)
-        instance.index_fields(self.vocab)
+        # instance.index_fields(self.vocab)
         return image, instance
 
 def collate_fn(data, to_gpu=False):

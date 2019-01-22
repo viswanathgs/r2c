@@ -6,7 +6,7 @@
 #SBATCH --job-name=r2c
 #SBATCH --output=/checkpoint/%u/logs/r2c-%j.out
 #SBATCH --error=/checkpoint/%u/logs/r2c-%j.err
-#SBATCH --partition=uninterrupted
+#SBATCH --partition=dev
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
@@ -33,6 +33,8 @@ PARAMS="$BASEDIR"/models/multiatt/default.json
 
 CHECKPOINT_DIR=/checkpoint/$USER/r2c/$SLURM_JOB_ID
 mkdir -p $CHECKPOINT_DIR
+
+export PYTHONUNBUFFERED=True
 
 echo "Running job $SLURM_JOB_ID on $SLURM_NODENAME."
 echo "GPUs: $CUDA_VISIBLE_DEVICES"

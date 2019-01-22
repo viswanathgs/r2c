@@ -4,15 +4,12 @@ Training script. Should be pretty adaptable to whatever.
 import argparse
 import os
 import shutil
+import time
 
 # Setting for distributed training.
 import torch.multiprocessing as mp
 if __name__ == '__main__':
-    world_size = int(os.environ.get('WORLD_SIZE', 1))
-    if world_size > 1:
-        # NCCL and GLOO backends for distributed training
-        # aren't fork safe
-        mp.set_start_method('forkserver')
+    mp.set_start_method('forkserver')
 
 import numpy as np
 import pandas as pd
@@ -103,6 +100,7 @@ def main():
                                   only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True))
     NUM_GPUS = torch.cuda.device_count()
     NUM_CPUS = mp.cpu_count()
+    print("Found {} GPUs and {} CPUs".format(NUM_GPUS, NUM_CPUS), flush=True)
     if NUM_GPUS == 0:
         raise ValueError("you need gpus!")
 
@@ -116,8 +114,9 @@ def main():
 
     num_workers = args.num_workers
     if num_workers is None:
-        num_workers = (4 * NUM_GPUS if NUM_CPUS >= 32 else 2*NUM_GPUS)-1
+        num_workers = (4 * NUM_GPUS if NUM_CPUS >= 32 else 2 * NUM_GPUS) - 1
     print(f"Using {num_workers} workers out of {NUM_CPUS} possible", flush=True)
+
     # TODO (viswanath): Distributed batch size, lr, checkpoint and restore,
     # validation run
     train_sampler = DistributedSampler(train) if args.distributed else None
@@ -132,7 +131,8 @@ def main():
 
     ARGS_RESET_EVERY = 100
     print("Loading {} for {}".format(params['model'].get('type', 'WTF?'), 'rationales' if args.rationale else 'answer'), flush=True)
-    model = Model.from_params(vocab=train.vocab, params=params['model'])
+
+    model = Model.from_params(params=params['model'])
     for submodule in model.detector.backbone.modules():
         if isinstance(submodule, BatchNorm2d):
             submodule.track_running_stats = False
@@ -170,6 +170,7 @@ def main():
         train_results = []
         norms = []
         model.train()
+        start_time = time.time()
         for b, (time_per_batch, batch) in enumerate(time_batch(train_loader if args.no_tqdm else tqdm(train_loader), reset_every=ARGS_RESET_EVERY)):
             batch = _to_gpu(batch)
             optimizer.zero_grad()
@@ -204,11 +205,15 @@ def main():
                     pd.DataFrame(train_results[-ARGS_RESET_EVERY:]).mean(),
                 ), flush=True)
 
+        train_elapsed = time.time() - start_time
+        print("Epoch {} done. Elapsed = {}s.".format(epoch_num, train_elapsed))
         print("---\nTRAIN EPOCH {:2d}:\n{}\n----".format(epoch_num, pd.DataFrame(train_results).mean()))
+
         val_probs = []
         val_labels = []
         val_loss_sum = 0.0
         model.eval()
+        start_time = time.time()
         for b, (time_per_batch, batch) in enumerate(time_batch(val_loader)):
             with torch.no_grad():
                 batch = _to_gpu(batch)
@@ -224,8 +229,11 @@ def main():
         if scheduler:
             scheduler.step(val_metric_per_epoch[-1], epoch_num)
 
+        val_elapsed = time.time() - start_time
+        print("Val epoch {} done. Elapsed = {}s.".format(epoch_num, val_elapsed))
         print("Val epoch {} has acc {:.3f} and loss {:.3f}".format(epoch_num, val_metric_per_epoch[-1], val_loss_avg),
               flush=True)
+
         if int(np.argmax(val_metric_per_epoch)) < (len(val_metric_per_epoch) - 1 - params['trainer']['patience']):
             print("Stopping at epoch {:2d}".format(epoch_num), flush=True)
             break

@@ -6,7 +6,7 @@
 #SBATCH --job-name=r2c_dist
 #SBATCH --output=/checkpoint/%u/logs/r2c-%j.out
 #SBATCH --error=/checkpoint/%u/logs/r2c-%j.err
-#SBATCH --partition=uninterrupted
+#SBATCH --partition=dev
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
@@ -15,7 +15,7 @@
 #SBATCH --time=24:00:00
 #SBATCH --open-mode=append
 
-# TODO (viswanath): nodes=4? change MASTER_ADDR as well
+# TODO (viswanath): nodes=4? May be use multi-process single-GPU setup
 
 . /usr/share/modules/init/sh
 
@@ -36,8 +36,10 @@ PARAMS="$BASEDIR"/models/multiatt/default.json
 CHECKPOINT_DIR=/checkpoint/$USER/r2c/$SLURM_JOB_ID
 mkdir -p $CHECKPOINT_DIR
 
+export PYTHONUNBUFFERED=True
+
 MASTER_ADDR="${SLURM_NODELIST//[}"
-export MASTER_ADDR="${MASTER_ADDR%,*}"
+export MASTER_ADDR="${MASTER_ADDR%[,-]*}"
 export MASTER_PORT=29500
 export WORLD_SIZE=${SLURM_NTASKS}
 
@@ -47,9 +49,4 @@ echo "Master: $MASTER_ADDR:$MASTER_PORT"
 echo "GPUs/node: $CUDA_VISIBLE_DEVICES"
 echo "Checkpoint dir: $CHECKPOINT_DIR"
 
-# num_workers > 0 requires using forkserver/spawn in
-# multiprocessing.set_start_method to avoid NCCL/GLOO deadlocks
-# in distributed setting, but forkserver causes pickle related issues
-# with allennlp. Setting num_workers=0 for now in distributed setting.
-# TODO (viswanath): May be use multi-process single-GPU setup?
-srun --label python $SOURCE --params $PARAMS --folder $CHECKPOINT_DIR --no_tqdm --num_workers 0
+srun --label python $SOURCE --params $PARAMS --folder $CHECKPOINT_DIR --no_tqdm
