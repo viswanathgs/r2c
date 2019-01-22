@@ -15,29 +15,10 @@
 #SBATCH --time=24:00:00
 #SBATCH --open-mode=append
 
-. /usr/share/modules/init/sh
-
-source deactivate
-
-module purge
-module load cuda/9.0
-module load NCCL/2.2.12-1-cuda.9.0
-module load cudnn/v7.0-cuda.9.0
-module load anaconda3/5.0.1
-
-source activate /private/home/"$USER"/.conda/envs/vcr
-
 BASEDIR=${2:-"/private/home/$USER/projects/r2c"}
-SOURCE="$BASEDIR"/models/train.py
-PARAMS="$BASEDIR"/models/multiatt/default.json
 
 CHECKPOINT_DIR=/checkpoint/$USER/r2c/$SLURM_JOB_ID
 mkdir -p $CHECKPOINT_DIR
 
-export PYTHONUNBUFFERED=True
-
-echo "Running job $SLURM_JOB_ID on $SLURM_NODENAME."
-echo "GPUs: $CUDA_VISIBLE_DEVICES"
-echo "Checkpoint dir: $CHECKPOINT_DIR"
-
-srun --label python $SOURCE --params $PARAMS --folder $CHECKPOINT_DIR --no_tqdm
+echo "Running job $SLURM_JOB_ID on $SLURMD_NODENAME"
+srun --label "$BASEDIR"/scripts/wrapper.sh $BASEDIR $CHECKPOINT_DIR
