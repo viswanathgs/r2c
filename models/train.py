@@ -77,17 +77,37 @@ parser.add_argument(
     '--num_workers', default=None, type=int,
     help='Number of workers in data loader',
 )
+parser.add_argument(
+    '--batch_size', default=96, type=int,
+    help='Mini-batch size per node (8 GPUs). In a multi-node setup, '
+         'the total batch size will be scaled up appropriately.',
+)
+
+
+def get_distributed_env():
+    if 'WORLD_SIZE' in os.environ and len(os.environ['WORLD_SIZE']) > 0:
+        world_size = int(os.environ['WORLD_SIZE'])
+    else:
+        world_size = 1
+
+    if 'RANK' in os.environ and len(os.environ['RANK']) > 0:
+        rank = int(os.environ['RANK'])
+    else:
+        rank = 0
+
+    assert rank < world_size
+    return rank, world_size
+
 
 def main():
     args = parser.parse_args()
 
-    world_size = int(os.environ.get('WORLD_SIZE', 1))
-    args.distributed = world_size > 1
+    rank, world_size = get_distributed_env()
+    distributed = world_size > 1
 
-    if args.distributed:
-        os.environ['RANK'] = os.environ['SLURM_PROCID']
+    if distributed:
         print('Distributed setup: world_size={} rank={} master={}:{}'.format(
-            world_size, os.environ['RANK'], os.environ['MASTER_ADDR'],
+            world_size, rank, os.environ['MASTER_ADDR'],
             os.environ['MASTER_PORT']), flush=True)
         dist.init_process_group(
             backend=args.dist_backend,
@@ -117,11 +137,9 @@ def main():
         num_workers = (4 * NUM_GPUS if NUM_CPUS >= 32 else 2 * NUM_GPUS) - 1
     print(f"Using {num_workers} workers out of {NUM_CPUS} possible", flush=True)
 
-    # TODO (viswanath): Distributed batch size, lr, checkpoint and restore,
-    # validation run
-    train_sampler = DistributedSampler(train) if args.distributed else None
+    train_sampler = DistributedSampler(train) if distributed else None
     loader_params = {
-        'batch_size': 96 // NUM_GPUS,
+        'batch_size': args.batch_size // NUM_GPUS,
         'num_gpus': NUM_GPUS,
         'num_workers': num_workers,
     }
@@ -139,7 +157,7 @@ def main():
         for p in submodule.parameters():
             p.requires_grad = False
 
-    if args.distributed:
+    if distributed:
         model.cuda()
         model = DistributedDataParallel(model)
     elif NUM_GPUS > 1:
@@ -165,7 +183,7 @@ def main():
     param_shapes = print_para(model)
     num_batches = 0
     for epoch_num in range(start_epoch, params['trainer']['num_epochs'] + start_epoch):
-        if args.distributed:
+        if distributed:
             train_sampler.set_epoch(epoch_num)
         train_results = []
         norms = []
@@ -237,7 +255,7 @@ def main():
         if int(np.argmax(val_metric_per_epoch)) < (len(val_metric_per_epoch) - 1 - params['trainer']['patience']):
             print("Stopping at epoch {:2d}".format(epoch_num), flush=True)
             break
-        if not args.distributed or os.environ['SLURM_PROCID'] == '0':
+        if rank == 0:
             save_checkpoint(
                 model, optimizer, args.folder, epoch_num, val_metric_per_epoch,
                 is_best=int(np.argmax(val_metric_per_epoch)) == (len(val_metric_per_epoch) - 1))
