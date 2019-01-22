@@ -19,7 +19,6 @@ from allennlp.nn import InitializerApplicator
 @Model.register("MultiHopAttentionQA")
 class AttentionQA(Model):
     def __init__(self,
-                 vocab: Vocabulary,
                  span_encoder: Seq2SeqEncoder,
                  reasoning_encoder: Seq2SeqEncoder,
                  input_dropout: float = 0.3,
@@ -33,6 +32,11 @@ class AttentionQA(Model):
                  pool_question: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  ):
+        # VCR dataset becomes unpicklable due to VCR.vocab, but we don't need
+        # to pass in vocab from the dataset anyway as the BERT embeddings are
+        # pretrained and stored in h5 files per dataset instance. Just pass
+        # a dummy vocab instance for init.
+        vocab = Vocabulary()
         super(AttentionQA, self).__init__(vocab)
 
         self.detector = SimpleDetector(pretrained=True, average_pool=True, semantic=class_embs, final_dim=512)

@@ -20,6 +20,7 @@ from dataloaders.bert_field import BertField
 import h5py
 from copy import deepcopy
 from config import VCR_IMAGES_DIR, VCR_ANNOTS_DIR
+from functools import partial
 
 GENDER_NEUTRAL_NAMES = ['Casey', 'Riley', 'Jessie', 'Jackie', 'Avery', 'Jaime', 'Peyton', 'Kerry', 'Jody', 'Kendall',
                         'Peyton', 'Skyler', 'Frankie', 'Pat', 'Quinn']
@@ -77,7 +78,11 @@ class VCR(Dataset):
             raise ValueError("split must be answer or rationale")
 
         self.token_indexers = {'elmo': ELMoTokenCharactersIndexer()}
-        self.vocab = Vocabulary()
+        # This makes VCR unpicklable with forkserver start method in
+        # multiprocessing which is needed for NCCL based distributed training.
+        # vocab here is anyway useless as BERT embeddings are precomputed per
+        # dataset instance.
+        # self.vocab = Vocabulary()
 
         # TODO: load COCO
         with open(os.path.join(os.path.dirname(VCR_ANNOTS_DIR), 'dataloaders', 'cocoontology.json'), 'r') as f:
@@ -239,7 +244,7 @@ class VCR(Dataset):
         instance_dict['boxes'] = ArrayField(boxes, padding_value=-1)
 
         instance = Instance(instance_dict)
-        instance.index_fields(self.vocab)
+        # instance.index_fields(self.vocab)
         return image, instance
 
 def collate_fn(data, to_gpu=False):
@@ -280,13 +285,15 @@ class VCRLoader(torch.utils.data.DataLoader):
     """
 
     @classmethod
-    def from_dataset(cls, data, batch_size=3, num_workers=6, num_gpus=3, **kwargs):
+    def from_dataset(cls, data, sampler=None, batch_size=3, num_workers=6,
+                     num_gpus=3, **kwargs):
         loader = cls(
             dataset=data,
             batch_size=batch_size * num_gpus,
-            shuffle=data.is_train,
+            sampler=sampler,
+            shuffle=(data.is_train and sampler is None),
             num_workers=num_workers,
-            collate_fn=lambda x: collate_fn(x, to_gpu=num_workers==0),
+            collate_fn=partial(collate_fn, to_gpu=(num_workers==0)),
             drop_last=data.is_train,
             pin_memory=False,
             **kwargs,

@@ -106,5 +106,5 @@ venv.bak/
 # SLURM
 slurm-*.out
 
-# swp
-*.swp
+# Swap files
+*.sw*
