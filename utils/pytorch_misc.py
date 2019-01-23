@@ -15,6 +15,7 @@ from allennlp.common.util import START_SYMBOL, END_SYMBOL
 from allennlp.nn.util import device_mapping
 from allennlp.training.trainer import move_optimizer_to_cuda
 from torch.nn import DataParallel
+from torch.nn.parallel import DistributedDataParallel
 
 
 def time_batch(gen, reset_every=100):
@@ -166,7 +167,10 @@ def save_checkpoint(model, optimizer, serialization_dir, epoch, val_metric_per_e
     """
     if serialization_dir is not None:
         model_path = os.path.join(serialization_dir, "model_state_epoch_{}.th".format(epoch))
-        model_state = model.module.state_dict() if isinstance(model, DataParallel) else model.state_dict()
+        if isinstance(model, (DataParallel, DistributedDataParallel)):
+            model_state = model.module.state_dict()
+        else:
+            model_state = model.state_dict()
         torch.save(model_state, model_path)
 
         training_state = {'epoch': epoch,
@@ -188,7 +192,7 @@ def restore_best_checkpoint(model, serialization_dir):
     fn = os.path.join(serialization_dir, 'best.th')
     model_state = torch.load(fn, map_location=device_mapping(-1))
     assert os.path.exists(fn)
-    if isinstance(model, DataParallel):
+    if isinstance(model, (DataParallel, DistributedDataParallel)):
         model.module.load_state_dict(model_state)
     else:
         model.load_state_dict(model_state)
@@ -224,7 +228,7 @@ def restore_checkpoint(model, optimizer, serialization_dir, learning_rate_schedu
     # buffer. The GPU transfer happens implicitly in load_state_dict.
     model_state = torch.load(model_path, map_location=device_mapping(-1))
     training_state = torch.load(training_state_path, map_location=device_mapping(-1))
-    if isinstance(model, DataParallel):
+    if isinstance(model, (DataParallel, DistributedDataParallel)):
         model.module.load_state_dict(model_state)
     else:
         model.load_state_dict(model_state)

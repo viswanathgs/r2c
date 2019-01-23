@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: sbatch launch.sh <BASE_DIR_TO_R2C_SOURCE>
+# Usage: sbatch launch.sh <BASE_DIR_TO_R2C_SOURCE> <CHECKPOINT_DIR>
 # Make sure to have run setup_env.sh first to create the environment.
 
 #SBATCH --job-name=r2c
@@ -13,11 +13,11 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=200G
 #SBATCH --time=24:00:00
+#SBATCH --signal=USR1@600
 #SBATCH --open-mode=append
 
-BASEDIR=${2:-"/private/home/$USER/projects/r2c"}
-
-CHECKPOINT_DIR=/checkpoint/$USER/r2c/$SLURM_JOB_ID
+BASEDIR=${1:-"/private/home/$USER/projects/r2c"}
+CHECKPOINT_DIR=${2:-"/checkpoint/$USER/r2c/$SLURM_JOB_ID"}
 mkdir -p $CHECKPOINT_DIR
 
 echo "Running job $SLURM_JOB_ID on $SLURMD_NODENAME"

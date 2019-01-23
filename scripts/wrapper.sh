@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Usage: ./wrapper.sh <BASE_DIR_TO_R2C_SOURCE> <CHECKPOINT_DIR>
+
 . /usr/share/modules/init/sh
 
 source deactivate

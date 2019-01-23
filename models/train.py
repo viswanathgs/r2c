@@ -4,6 +4,7 @@ Training script. Should be pretty adaptable to whatever.
 import argparse
 import os
 import shutil
+import signal
 import time
 
 # Setting for distributed training.
@@ -98,21 +99,49 @@ def get_distributed_env():
     assert rank < world_size
     return rank, world_size
 
+RANK, WORLD_SIZE = get_distributed_env()
+MAIN_PID = os.getpid()
+
+
+def sigterm_handler(signum, frame):
+    print('Received SIGTERM, ignoring', flush=True)
+
+
+def sigusr_handler(signum, frame):
+    print('Received SIGUSR1', flush=True)
+
+    # Only requeue from the main process
+    if RANK != 0 or os.getpid() != MAIN_PID:
+        return
+
+    if 'SLURM_JOB_ID' not in os.environ:
+        print('No SLURM_JOB_ID found, ignoring SIGUSR1', flush=True)
+        return
+
+    job_id = os.environ['SLURM_JOB_ID']
+    command = 'scontrol requeue {}'.format(job_id)
+    if os.system(command):
+        raise RuntimeError('Failed to requeue job {}'.format(job_id))
+    print('Requeued job {}'.format(job_id))
+
 
 def main():
     args = parser.parse_args()
 
-    rank, world_size = get_distributed_env()
-    distributed = world_size > 1
+    signal.signal(signal.SIGUSR1, sigusr_handler)
+    signal.signal(signal.SIGTERM, sigterm_handler)
+    print('Signal handler installed', flush=True)
+
+    distributed = WORLD_SIZE > 1
 
     if distributed:
         print('Distributed setup: world_size={} rank={} master={}:{}'.format(
-            world_size, rank, os.environ['MASTER_ADDR'],
+            WORLD_SIZE, RANK, os.environ['MASTER_ADDR'],
             os.environ['MASTER_PORT']), flush=True)
         dist.init_process_group(
             backend=args.dist_backend,
             init_method=args.dist_url,
-            world_size=world_size)
+            world_size=WORLD_SIZE)
 
     params = Params.from_file(args.params)
     train, val, test = VCR.splits(mode='rationale' if args.rationale else 'answer',
@@ -174,6 +203,7 @@ def main():
         print("Found folder! restoring", flush=True)
         start_epoch, val_metric_per_epoch = restore_checkpoint(model, optimizer, serialization_dir=args.folder,
                                                                learning_rate_scheduler=scheduler)
+        print("Resuming from epoch {}".format(start_epoch), flush=True)
     else:
         print("Making directories")
         os.makedirs(args.folder, exist_ok=True)
@@ -255,7 +285,7 @@ def main():
         if int(np.argmax(val_metric_per_epoch)) < (len(val_metric_per_epoch) - 1 - params['trainer']['patience']):
             print("Stopping at epoch {:2d}".format(epoch_num), flush=True)
             break
-        if rank == 0:
+        if RANK == 0:
             save_checkpoint(
                 model, optimizer, args.folder, epoch_num, val_metric_per_epoch,
                 is_best=int(np.argmax(val_metric_per_epoch)) == (len(val_metric_per_epoch) - 1))
