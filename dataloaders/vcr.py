@@ -72,10 +72,10 @@ class VCR(Dataset):
             self.items = [json.loads(s) for s in f]
 
         if split not in ('test', 'train', 'val'):
-            raise ValueError("Mode must be in test, train, or val. Supplied {}".format(mode))
+            raise ValueError("Split must be in test, train, or val. Supplied {}".format(split))
 
         if mode not in ('answer', 'rationale'):
-            raise ValueError("split must be answer or rationale")
+            raise ValueError("Mode must be answer or rationale")
 
         self.token_indexers = {'elmo': ELMoTokenCharactersIndexer()}
         # This makes VCR unpicklable with forkserver start method in
@@ -94,6 +94,21 @@ class VCR(Dataset):
         self.h5fn = os.path.join(VCR_ANNOTS_DIR, f'{self.embs_to_load}_{self.mode}_{self.split}.h5')
         print("Loading embeddings from {}".format(self.h5fn), flush=True)
         self.h5 = None
+
+    def set_answer_labels(self, answer_labels):
+        """
+        Updates the ground-truth 'answer_label' in json. This can be used to
+        override the ground-truth with predicted answers to compute performance
+        of QA->R conditioned on previously predicted answers.
+
+        Note: This must be set right after __init__ before any iteration over
+        or indexing into the dataset.
+        """
+        assert len(answer_labels) == len(self.items)
+        for i, item in enumerate(self.items):
+            label = answer_labels[i]
+            assert label < len(item['answer_choices'])
+            item['answer_label'] = label
 
     @property
     def is_train(self):
