@@ -20,7 +20,7 @@ PARAMS="$BASEDIR"/models/multiatt/default.json
 echo "Kicking off $SOURCE with params $PARAMS."
 
 MASTER_ADDR="${SLURM_NODELIST//[}"
-export MASTER_ADDR="${MASTER_ADDR%[,-]*}"
+export MASTER_ADDR="${MASTER_ADDR%%[,-]*}"
 export MASTER_PORT=29500
 export WORLD_SIZE=${SLURM_NTASKS}
 export RANK=${SLURM_PROCID}
