@@ -26,6 +26,7 @@ import tensorflow as tf
 
 from data.get_bert_embeddings import tokenization
 from data.get_bert_embeddings.vcr_loader import data_iter, convert_examples_to_features
+from config import VCR_ANNOTS_DIR
 
 flags = tf.flags
 
@@ -172,8 +173,10 @@ def create_float_feature(values):
 def create_training_instances(tokenizer, rng):
     print("Iterating through the data", flush=True)
     input_examples = []
-    for x in data_iter(f'../{FLAGS.split}.jsonl', tokenizer=tokenizer, max_seq_length=FLAGS.max_seq_length,
-                                endingonly=False):
+    for x in data_iter(
+            os.path.join(VCR_ANNOTS_DIR, f'{FLAGS.split}.jsonl'),
+            tokenizer=tokenizer, max_seq_length=FLAGS.max_seq_length,
+            endingonly=False):
         input_examples.append(x[0])
 
     print("Converting data to features", flush=True)

@@ -29,6 +29,7 @@ import tensorflow as tf
 import h5py
 from tqdm import tqdm
 from data.get_bert_embeddings.vcr_loader import data_iter, data_iter_test, convert_examples_to_features, input_fn_builder
+from config import VCR_ANNOTS_DIR
 
 flags = tf.flags
 
@@ -173,7 +174,8 @@ tokenizer = tokenization.FullTokenizer(
 ########################################
 
 data_iter_ = data_iter if FLAGS.split != 'test' else data_iter_test
-examples = [x for x in data_iter_(f'../{FLAGS.split}.jsonl',
+examples = [x for x in data_iter_(
+                                 os.path.join(VCR_ANNOTS_DIR, f'{FLAGS.split}.jsonl'),
                                  tokenizer=tokenizer,
                                  max_seq_length=FLAGS.max_seq_length,
                                  endingonly=FLAGS.endingonly)]

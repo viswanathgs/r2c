@@ -24,7 +24,11 @@ pip install --no-deps allennlp==0.8.0
 
 python -m spacy download en_core_web_sm
 
-pip uninstall pillow && CC="cc -mavx2" pip install -U --force-reinstall pillow-simd
+pip uninstall -y pillow && CC="cc -mavx2" pip install -U --force-reinstall pillow-simd
+
+# tensorflow (optional, only if training and generating BERT embeddings)
+pip uninstall -y tensorflow tensorflow-gpu protobuf
+pip install tensorflow tensorflow-gpu
 
 echo "Setup conda env: vcr"
 source deactivate
