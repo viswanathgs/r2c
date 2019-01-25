@@ -161,9 +161,7 @@ def main():
                 async=True)
         return td
 
-    num_workers = args.num_workers
-    if num_workers is None:
-        num_workers = (4 * NUM_GPUS if NUM_CPUS >= 32 else 2 * NUM_GPUS) - 1
+    num_workers = 4 * NUM_GPUS if args.num_workers is None else args.num_workers
     print(f"Using {num_workers} workers out of {NUM_CPUS} possible", flush=True)
 
     train_sampler = DistributedSampler(train) if distributed else None

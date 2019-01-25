@@ -40,9 +40,10 @@ export CUDA_VISIBLE_DEVICES=0
 python pretrain_on_vcr.py --do_train 
 ```
 
-This creates a folder called `bert-pretrain`. Now, extract the features as follows.
+This creates a folder called `bert-pretrained`. Now, extract the features as follows.
 
 ```
-python extract_features.py --name bert_da --init_checkpoint bert-pretrain/model.ckpt-53230 --split=train
+python extract_features.py --name bert_da --init_checkpoint bert-pretrained/model.ckpt-53230 --split=train
 ```
 
+To extract features for all answer and rationale combinations even for train and val splits, use pass `--all_answers_for_rationales` to `extract_features.py`. This could be used for running Q->AR validation conditioned on Q->A predictions rather than ground-truth answers, as well as for joint answer-rationale training.

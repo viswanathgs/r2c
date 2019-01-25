@@ -29,6 +29,7 @@ import tensorflow as tf
 import h5py
 from tqdm import tqdm
 from data.get_bert_embeddings.vcr_loader import data_iter, data_iter_test, convert_examples_to_features, input_fn_builder
+from config import VCR_ANNOTS_DIR
 
 flags = tf.flags
 
@@ -37,6 +38,12 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("name", 'bert', "The name to use")
 
 flags.DEFINE_string("split", 'train', "The split to use")
+
+flags.DEFINE_bool("all_answers_for_rationale", False,
+    "If set, generate all 16 embeddings for all |answers| x |rationales|, "
+    "not just for the correct answer. This is applicable only in rationale "
+    "mode, and is done by default for test split since we don't know the "
+    "correct answer.")
 
 flags.DEFINE_string("layers", "-2", "")
 
@@ -172,8 +179,11 @@ tokenizer = tokenization.FullTokenizer(
     vocab_file=vocab_file, do_lower_case=FLAGS.do_lower_case)
 ########################################
 
-data_iter_ = data_iter if FLAGS.split != 'test' else data_iter_test
-examples = [x for x in data_iter_(f'../{FLAGS.split}.jsonl',
+all_answers_for_rationale = (FLAGS.split == 'test') or FLAGS.all_answers_for_rationale
+
+data_iter_ = data_iter if not all_answers_for_rationale else data_iter_test
+examples = [x for x in data_iter_(
+                                 os.path.join(VCR_ANNOTS_DIR, f'{FLAGS.split}.jsonl'),
                                  tokenizer=tokenizer,
                                  max_seq_length=FLAGS.max_seq_length,
                                  endingonly=FLAGS.endingonly)]
@@ -210,9 +220,12 @@ input_fn = input_fn_builder(
     features=features, seq_length=FLAGS.max_seq_length)
 
 output_h5_qa = h5py.File(f'../{FLAGS.name}_answer_{FLAGS.split}.h5', 'w')
-output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}.h5', 'w')
+if not all_answers_for_rationale:
+    output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}.h5', 'w')
+else:
+    output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}_all.h5', 'w')
 
-if FLAGS.split != 'test':
+if not all_answers_for_rationale:
     subgroup_names = [
         'answer0',
         'answer1',

@@ -188,14 +188,23 @@ def save_checkpoint(model, optimizer, serialization_dir, epoch, val_metric_per_e
             shutil.copyfile(model_path, os.path.join(serialization_dir, "best.th"))
 
 
-def restore_best_checkpoint(model, serialization_dir):
-    fn = os.path.join(serialization_dir, 'best.th')
-    model_state = torch.load(fn, map_location=device_mapping(-1))
-    assert os.path.exists(fn)
+def restore_model_state(model, model_path):
+    assert os.path.exists(model_path)
+
+    # Load the parameters onto CPU, then transfer to GPU.
+    # This avoids potential OOM on GPU for large models that
+    # load parameters onto GPU then make a new GPU copy into the parameter
+    # buffer. The GPU transfer happens implicitly in load_state_dict.
+    model_state = torch.load(model_path, map_location=device_mapping(-1))
     if isinstance(model, (DataParallel, DistributedDataParallel)):
         model.module.load_state_dict(model_state)
     else:
         model.load_state_dict(model_state)
+
+
+def restore_best_checkpoint(model, serialization_dir):
+    model_path = os.path.join(serialization_dir, 'best.th')
+    restore_model_state(model, model_path)
 
 
 def restore_checkpoint(model, optimizer, serialization_dir, learning_rate_scheduler=None):
@@ -221,17 +230,8 @@ def restore_checkpoint(model, optimizer, serialization_dir, learning_rate_schedu
         return 0, []
 
     model_path, training_state_path = latest_checkpoint
-
-    # Load the parameters onto CPU, then transfer to GPU.
-    # This avoids potential OOM on GPU for large models that
-    # load parameters onto GPU then make a new GPU copy into the parameter
-    # buffer. The GPU transfer happens implicitly in load_state_dict.
-    model_state = torch.load(model_path, map_location=device_mapping(-1))
+    restore_model_state(model, model_path)
     training_state = torch.load(training_state_path, map_location=device_mapping(-1))
-    if isinstance(model, (DataParallel, DistributedDataParallel)):
-        model.module.load_state_dict(model_state)
-    else:
-        model.load_state_dict(model_state)
 
     # idk this is always bad luck for me
     optimizer.load_state_dict(training_state["optimizer"])
