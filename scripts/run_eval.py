@@ -141,7 +141,7 @@ def compute_baseline(args):
     # Compute accuracy for Q->AR
     ar_gt = list(zip(answer_gt, rationale_gt))
     ar_pred = list(zip(answer_pred, rationale_pred))
-    ar_accuracy = float(np.mean(ar_gt == ar_pred))
+    ar_accuracy = float(np.mean([gt == pred for gt, pred in zip(ar_gt, ar_pred)]))
     LOG.info('Q->A: {}, QA->R: {}, Q->AR: {}'.format(
         answer_accuracy, rationale_accuracy, ar_accuracy))
 
