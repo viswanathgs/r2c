@@ -40,9 +40,9 @@ export CUDA_VISIBLE_DEVICES=0
 python pretrain_on_vcr.py --do_train 
 ```
 
-This creates a folder called `bert-pretrain`. Now, extract the features as follows.
+This creates a folder called `bert-pretrained`. Now, extract the features as follows.
 
 ```
-python extract_features.py --name bert_da --init_checkpoint bert-pretrain/model.ckpt-53230 --split=train
+python extract_features.py --name bert_da --init_checkpoint bert-pretrained/model.ckpt-53230 --split=train
 ```
 
