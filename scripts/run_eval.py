@@ -125,8 +125,6 @@ def compute_baseline(args):
     LOG.info('Running val for QA->R task (with predicted answers)')
     rationale_val = load_val_set(params, 'rationale', all_answers_for_rationale=True)
     # Update gt answers with Q->A predictions
-    # TODO (viswanath): This doesn't work yet - BERT contextual embeddings need
-    # to be computed for the (question, predicted_answer).
     rationale_val.set_answer_labels(answer_pred)
     rationale_gt, rationale_pred = run_eval(
         model,
