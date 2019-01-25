@@ -2,7 +2,11 @@
 
 # Usage: sbatch run_eval.sh <BASE_DIR_TO_R2C_SOURCE> <ANSWER_MODEL> <RATIONALE_MODEL>
 #
-# This needs rationale val BERT features generated for all answer and rationale combinations, which can be done with the following commands:
+# This needs rationale val BERT features generated for all answer and rationale combinations, which can
+# be found in `VCR_ANNOTS_DIR`. The VCR dataset for BERT finetuning and and the trained BERT models
+# used for extracting features can be found in /checkpoint/viswanath/r2c/bert_embeddings/.
+#
+# Steps below for reference:
 #
 # # Setup env if not done already
 # cd /private/home/$USER/projects/r2c/
