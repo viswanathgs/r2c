@@ -41,13 +41,14 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_val_set(params, mode):
+def load_val_set(params, mode, all_answers_for_rationale=False):
     assert mode in ['answer', 'rationale']
     return VCR(
         split='val',
         mode=mode,
         embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
         only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True),
+        all_answers_for_rationale=all_answers_for_rationale,
     )
 
 
@@ -122,7 +123,7 @@ def compute_baseline(args):
     LOG.info('QA->R accuracy (ground-truth answers): {}'.format(rationale_accuracy))
 
     LOG.info('Running val for QA->R task (with predicted answers)')
-    rationale_val = load_val_set(params, 'rationale')
+    rationale_val = load_val_set(params, 'rationale', all_answers_for_rationale=True)
     # Update gt answers with Q->A predictions
     # TODO (viswanath): This doesn't work yet - BERT contextual embeddings need
     # to be computed for the (question, predicted_answer).
