@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: ./wrapper.sh <BASE_DIR_TO_R2C_SOURCE> <CHECKPOINT_DIR>
+# Usage: ./wrapper.sh <MODE> <BASE_DIR_TO_R2C_SOURCE> <CHECKPOINT_DIR>
 
 . /usr/share/modules/init/sh
 
@@ -14,8 +14,9 @@ module load anaconda3/5.0.1
 
 source activate /private/home/"$USER"/.conda/envs/vcr
 
-BASEDIR=${1:-"/private/home/$USER/projects/r2c"}
-CHECKPOINT_DIR=${2:-"/checkpoint/$USER/r2c/$SLURM_JOB_ID"}
+MODE=${1:-"answer"}
+BASEDIR=${2:-"/private/home/$USER/projects/r2c"}
+CHECKPOINT_DIR=${3:-"/checkpoint/$USER/r2c/$SLURM_JOB_ID"}
 SOURCE="$BASEDIR"/models/train.py
 PARAMS="$BASEDIR"/models/multiatt/default.json
 
@@ -28,6 +29,7 @@ export WORLD_SIZE=${SLURM_NTASKS}
 export RANK=${SLURM_PROCID}
 
 echo "Running job $SLURM_JOB_ID on $SLURM_NNODES nodes: $SLURM_NODELIST"
+echo "Mode: $MODE"
 echo "Node: $SLURMD_NODENAME"
 echo "Master: $MASTER_ADDR:$MASTER_PORT"
 echo "World Size: $WORLD_SIZE"
@@ -37,4 +39,9 @@ echo "Checkpoint dir: $CHECKPOINT_DIR"
 
 export PYTHONUNBUFFERED=True
 
-python $SOURCE --params $PARAMS --folder $CHECKPOINT_DIR --no_tqdm
+EXTRA_ARGS=""
+if [ "$MODE" == rationale ]; then
+  EXTRA_ARGS="$EXTRA_ARGS --rationale"
+fi
+
+python $SOURCE --params $PARAMS --folder $CHECKPOINT_DIR --no_tqdm $EXTRA_ARGS
