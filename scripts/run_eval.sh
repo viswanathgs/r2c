@@ -1,6 +1,26 @@
 #!/bin/bash
 
 # Usage: sbatch run_eval.sh <BASE_DIR_TO_R2C_SOURCE> <ANSWER_MODEL> <RATIONALE_MODEL>
+#
+# This needs rationale val BERT features generated for all answer and rationale combinations, which can be done with the following commands:
+#
+# # Setup env if not done already
+# cd /private/home/$USER/projects/r2c/
+# ./scripts/setup_env.sh
+#
+# # Create `pretrainingdata.tfrecord` from the train split
+# cd /private/home/$USER/projects/r2c/data/generate_bert_embeddings/
+# python create_pretraining_data.py
+#
+# # Train BERT with `pretrainingdata.tfrecord`. Model checkpoints
+# # will be stored in a directory `bert-pretrained`.
+# CUDA_VISIBLE_DEVICES=0 python pretrain_on_vcr.py --do_train
+#
+# # Now, extract the features as follows.
+# # Copy the file to `VCR_ANNOTS_DIR`.
+# CUDA_VISIBLE_DEVICES=0 python extract_features.py --name bert_da --init_checkpoint bert-pretrained/model.ckpt-53230 --split=val --all_answers_for_rationale
+#
+# # Finally, we have `bert_da_rationale_val_all.h5`. Copy it to `VCR_ANNOTS_DIR`.
 
 #SBATCH --job-name=r2c_eval
 #SBATCH --output=/checkpoint/%u/logs/r2c-eval-%j.out
