@@ -21,6 +21,7 @@ from __future__ import print_function
 import os
 import requests
 import zipfile
+import math
 import numpy as np
 
 from data.get_bert_embeddings import modeling
@@ -80,6 +81,11 @@ flags.DEFINE_bool(
     "If True, tf.one_hot will be used for embedding lookups, otherwise "
     "tf.nn.embedding_lookup will be used. On TPUs, this should be True "
     "since it is much faster.")
+
+flags.DEFINE_integer(
+    "chunk_size", 50000,
+    "If > 0, process items in chunks of this size. This useful to get around "
+    "the TF protobuf size limit of 2GB.")
 
 ####
 
@@ -187,8 +193,10 @@ examples = [x for x in data_iter_(
                                  tokenizer=tokenizer,
                                  max_seq_length=FLAGS.max_seq_length,
                                  endingonly=FLAGS.endingonly)]
+print('Obtained {} examples'.format(len(examples)))
 features = convert_examples_to_features(
     examples=[x[0] for x in examples], seq_length=FLAGS.max_seq_length, tokenizer=tokenizer)
+print('Converted examples to features')
 unique_id_to_ind = {}
 for i, feature in enumerate(features):
     unique_id_to_ind[feature.unique_id] = i
@@ -215,9 +223,6 @@ estimator = tf.contrib.tpu.TPUEstimator(
     model_fn=model_fn,
     config=run_config,
     predict_batch_size=FLAGS.batch_size)
-
-input_fn = input_fn_builder(
-    features=features, seq_length=FLAGS.max_seq_length)
 
 output_h5_qa = h5py.File(f'../{FLAGS.name}_answer_{FLAGS.split}.h5', 'w')
 if not all_answers_for_rationale:
@@ -267,22 +272,41 @@ def alignment_gather(alignment, layer):
     return output_embs
 
 
-for result in tqdm(estimator.predict(input_fn, yield_single_examples=True)):
-    ind = unique_id_to_ind[int(result["unique_id"])]
+def chunk(items, chunk_size):
+    for i in range(0, len(items), chunk_size):
+        yield items[i:i + chunk_size]
 
-    text, ctx_alignment, choice_alignment = examples[ind]
-    # just one layer for now
-    layer = result['layer_output_0']
-    ex2use = ind//len(subgroup_names)
-    subgroup_name = subgroup_names[ind % len(subgroup_names)]
 
-    group2use = (output_h5_qa if subgroup_name.startswith('answer') else output_h5_qar)[f'{ex2use}']
-    alignment_ctx = [-1] + ctx_alignment
+assert len(features) % len(subgroup_names) == 0
+if FLAGS.chunk_size > 0:
+    chunk_size = min(FLAGS.chunk_size * len(subgroup_names), len(features))
+else:
+    chunk_size = len(features)
+num_chunks = math.ceil(len(features) / chunk_size)
 
-    if FLAGS.endingonly:
-        # just a single span here
-        group2use.create_dataset(f'answer_{subgroup_name}', data=alignment_gather(alignment_ctx, layer))
-    else:
-        alignment_answer = [-1] + [-1 for i in range(len(ctx_alignment))] + [-1] + choice_alignment
-        group2use.create_dataset(f'ctx_{subgroup_name}', data=alignment_gather(alignment_ctx, layer))
-        group2use.create_dataset(f'answer_{subgroup_name}', data=alignment_gather(alignment_answer, layer))
+
+for chunk_id, feats in enumerate(chunk(features, chunk_size)):
+    print("Processing chunk {} / {}".format(chunk_id + 1, num_chunks))
+
+    input_fn = input_fn_builder(
+        features=feats, seq_length=FLAGS.max_seq_length)
+
+    for result in tqdm(estimator.predict(input_fn, yield_single_examples=True)):
+        ind = unique_id_to_ind[int(result["unique_id"])]
+
+        text, ctx_alignment, choice_alignment = examples[ind]
+        # just one layer for now
+        layer = result['layer_output_0']
+        ex2use = ind//len(subgroup_names)
+        subgroup_name = subgroup_names[ind % len(subgroup_names)]
+
+        group2use = (output_h5_qa if subgroup_name.startswith('answer') else output_h5_qar)[f'{ex2use}']
+        alignment_ctx = [-1] + ctx_alignment
+
+        if FLAGS.endingonly:
+            # just a single span here
+            group2use.create_dataset(f'answer_{subgroup_name}', data=alignment_gather(alignment_ctx, layer))
+        else:
+            alignment_answer = [-1] + [-1 for i in range(len(ctx_alignment))] + [-1] + choice_alignment
+            group2use.create_dataset(f'ctx_{subgroup_name}', data=alignment_gather(alignment_ctx, layer))
+            group2use.create_dataset(f'answer_{subgroup_name}', data=alignment_gather(alignment_answer, layer))
