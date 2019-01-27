@@ -29,7 +29,8 @@ from data.get_bert_embeddings import tokenization
 import tensorflow as tf
 import h5py
 from tqdm import tqdm
-from data.get_bert_embeddings.vcr_loader import data_iter, data_iter_test, convert_examples_to_features, input_fn_builder
+from data.get_bert_embeddings.vcr_loader import (data_iter, data_iter_test,
+        data_iter_joint, convert_examples_to_features, input_fn_builder)
 from config import VCR_ANNOTS_DIR
 
 flags = tf.flags
@@ -45,6 +46,11 @@ flags.DEFINE_bool("all_answers_for_rationale", False,
     "not just for the correct answer. This is applicable only in rationale "
     "mode, and is done by default for test split since we don't know the "
     "correct answer.")
+
+flags.DEFINE_bool(
+    "joint", False,
+    "If set, generate joint embeddings for all (answer, rationale) pairs "
+    "treating Q->AR as a 16-way softmax.")
 
 flags.DEFINE_string("layers", "-2", "")
 
@@ -99,7 +105,7 @@ if not os.path.exists('uncased_L-12_H-768_A-12'):
     with zipfile.ZipFile('uncased_L-12_H-768_A-12.zip') as zf:
         zf.extractall()
 
-print("BERT HAS BEEN DOWNLOADED")
+tf.logging.info("BERT HAS BEEN DOWNLOADED")
 mypath = os.getcwd()
 bert_config_file = os.path.join(mypath, 'uncased_L-12_H-768_A-12', 'bert_config.json')
 vocab_file = os.path.join(mypath, 'uncased_L-12_H-768_A-12', 'vocab.txt')
@@ -185,18 +191,21 @@ tokenizer = tokenization.FullTokenizer(
     vocab_file=vocab_file, do_lower_case=FLAGS.do_lower_case)
 ########################################
 
-all_answers_for_rationale = (FLAGS.split == 'test') or FLAGS.all_answers_for_rationale
-
-data_iter_ = data_iter if not all_answers_for_rationale else data_iter_test
+if FLAGS.joint:
+    all_answers_for_rationale = False
+    data_iter_ = data_iter_joint
+else:
+    all_answers_for_rationale = (FLAGS.split == 'test') or FLAGS.all_answers_for_rationale
+    data_iter_ = data_iter if not all_answers_for_rationale else data_iter_test
 examples = [x for x in data_iter_(
                                  os.path.join(VCR_ANNOTS_DIR, f'{FLAGS.split}.jsonl'),
                                  tokenizer=tokenizer,
                                  max_seq_length=FLAGS.max_seq_length,
                                  endingonly=FLAGS.endingonly)]
-print('Obtained {} examples'.format(len(examples)))
+tf.logging.info('Obtained {} examples'.format(len(examples)))
 features = convert_examples_to_features(
     examples=[x[0] for x in examples], seq_length=FLAGS.max_seq_length, tokenizer=tokenizer)
-print('Converted examples to features')
+tf.logging.info('Converted examples to features')
 unique_id_to_ind = {}
 for i, feature in enumerate(features):
     unique_id_to_ind[feature.unique_id] = i
@@ -224,33 +233,40 @@ estimator = tf.contrib.tpu.TPUEstimator(
     config=run_config,
     predict_batch_size=FLAGS.batch_size)
 
-output_h5_qa = h5py.File(f'../{FLAGS.name}_answer_{FLAGS.split}.h5', 'w')
-if not all_answers_for_rationale:
-    output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}.h5', 'w')
+if FLAGS.joint:
+    output_h5_joint = h5py.File(f'../{FLAGS.name}_joint_{FLAGS.split}.h5', 'w')
+    subgroup_names = [f'joint{i}' for i in range(16)]
 else:
-    output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}_all.h5', 'w')
-
-if not all_answers_for_rationale:
-    subgroup_names = [
-        'answer0',
-        'answer1',
-        'answer2',
-        'answer3',
-        'rationale0',
-        'rationale1',
-        'rationale2',
-        'rationale3',
-    ]
-else:
-    subgroup_names = [
-        'answer0',
-        'answer1',
-        'answer2',
-        'answer3'] + [f'rationale{x}{y}' for x in range(4) for y in range(4)]
+    output_h5_qa = h5py.File(f'../{FLAGS.name}_answer_{FLAGS.split}.h5', 'w')
+    if all_answers_for_rationale:
+        # For test split, all_answers_for_rationale is the default. Avoid
+        # appending '_all' to the filename for backward compatibility.
+        output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}_all.h5', 'w') \
+                if FLAGS.split != 'test' else h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}.h5', 'w')
+        subgroup_names = [
+            'answer0',
+            'answer1',
+            'answer2',
+            'answer3'] + [f'rationale{x}{y}' for x in range(4) for y in range(4)]
+    else:
+        output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}.h5', 'w')
+        subgroup_names = [
+            'answer0',
+            'answer1',
+            'answer2',
+            'answer3',
+            'rationale0',
+            'rationale1',
+            'rationale2',
+            'rationale3',
+        ]
 
 for i in range(len(examples) // len(subgroup_names)):
-    output_h5_qa.create_group(f'{i}')
-    output_h5_qar.create_group(f'{i}')
+    if FLAGS.joint:
+        output_h5_joint.create_group(f'{i}')
+    else:
+        output_h5_qa.create_group(f'{i}')
+        output_h5_qar.create_group(f'{i}')
 
 
 def alignment_gather(alignment, layer):
@@ -286,7 +302,7 @@ num_chunks = math.ceil(len(features) / chunk_size)
 
 
 for chunk_id, feats in enumerate(chunk(features, chunk_size)):
-    print("Processing chunk {} / {}".format(chunk_id + 1, num_chunks))
+    tf.logging.info("Processing chunk {} / {}".format(chunk_id + 1, num_chunks))
 
     input_fn = input_fn_builder(
         features=feats, seq_length=FLAGS.max_seq_length)
@@ -300,7 +316,12 @@ for chunk_id, feats in enumerate(chunk(features, chunk_size)):
         ex2use = ind//len(subgroup_names)
         subgroup_name = subgroup_names[ind % len(subgroup_names)]
 
-        group2use = (output_h5_qa if subgroup_name.startswith('answer') else output_h5_qar)[f'{ex2use}']
+        if subgroup_name.startswith('answer'):
+            group2use = output_h5_qa[f'{ex2use}']
+        elif subgroup_name.startswith('rationale'):
+            group2use = output_h5_qar[f'{ex2use}']
+        else:
+            group2use = output_h5_joint[f'{ex2use}']
         alignment_ctx = [-1] + ctx_alignment
 
         if FLAGS.endingonly:

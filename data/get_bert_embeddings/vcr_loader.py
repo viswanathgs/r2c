@@ -192,15 +192,23 @@ def _fix_tokenization(tokenized_sent, obj_to_type, det_hist=None):
     return new_tokenization, det_hist
 
 
-def fix_item(item, answer_label=None, rationales=True):
-    if rationales:
+def fix_item(item, answer_label=None, mode='rationale'):
+    assert mode in ['answer', 'rationale', 'joint']
+    if mode == 'rationale':
         assert answer_label is not None
         ctx = item['question'] + item['answer_choices'][answer_label]
     else:
         ctx = item['question']
 
     q_tok, hist = _fix_tokenization(ctx, item['objects'])
-    choices = item['rationale_choices'] if rationales else item['answer_choices']
+    if mode == 'answer':
+        choices = item['answer_choices']
+    elif mode == 'rationale':
+        choices = item['rationale_choices']
+    else:
+        # All 16 (answer, rationale) pairs
+        choices = [a + r for a in item['answer_choices'] \
+                            for r in item['rationale_choices']]
     a_toks = [_fix_tokenization(choice, obj_to_type=item['objects'], det_hist=hist)[0] for choice in choices]
     return q_tok, a_toks
 
@@ -264,8 +272,8 @@ def data_iter(data_fn, tokenizer, max_seq_length, endingonly):
     with open(data_fn, 'r') as f:
         for line_no, line in enumerate(tqdm(f)):
             item = json.loads(line)
-            q_tokens, a_tokens = fix_item(item, rationales=False)
-            qa_tokens, r_tokens = fix_item(item, answer_label=item['answer_label'], rationales=True)
+            q_tokens, a_tokens = fix_item(item, mode='answer')
+            qa_tokens, r_tokens = fix_item(item, answer_label=item['answer_label'], mode='rationale')
 
             for (name, ctx, answers) in (('qa', q_tokens, a_tokens), ('qar', qa_tokens, r_tokens)):
                 for i in range(4):
@@ -276,13 +284,32 @@ def data_iter(data_fn, tokenizer, max_seq_length, endingonly):
                     counter += 1
 
 
+def data_iter_joint(data_fn, tokenizer, max_seq_length, endingonly):
+    counter = 0
+    with open(data_fn, 'r') as f:
+        for line_no, line in enumerate(tqdm(f)):
+            item = json.loads(line)
+            q_tokens, ar_tokens = fix_item(item, mode='joint')
+
+            correct_choice = -1
+            if 'answer_label' in item and 'rationale_label' in item:
+                correct_choice = item['answer_label'] * 4 + item['rationale_label']
+
+            for i in range(len(ar_tokens)):
+                is_correct = (i == correct_choice)
+                yield process_ctx_ans_for_bert(q_tokens, ar_tokens[i],
+                        tokenizer, counter=counter, endingonly=endingonly,
+                        max_seq_length=max_seq_length, is_correct=is_correct)
+                counter += 1
+
+
 def data_iter_test(data_fn, tokenizer, max_seq_length, endingonly):
     """ Essentially this needs to be a bit separate from data_iter because we don't know which answer is correct."""
     counter = 0
     with open(data_fn, 'r') as f:
         for line_no, line in enumerate(tqdm(f)):
             item = json.loads(line)
-            q_tokens, a_tokens = fix_item(item, rationales=False)
+            q_tokens, a_tokens = fix_item(item, mode='answer')
 
             # First yield the answers
             for i in range(4):
@@ -291,7 +318,7 @@ def data_iter_test(data_fn, tokenizer, max_seq_length, endingonly):
                 counter += 1
 
             for i in range(4):
-                qa_tokens, r_tokens = fix_item(item, answer_label=i, rationales=True)
+                qa_tokens, r_tokens = fix_item(item, answer_label=i, mode='rationale')
                 for r_token in r_tokens:
                     yield process_ctx_ans_for_bert(qa_tokens, r_token, tokenizer, counter=counter,
                                                    endingonly=endingonly,

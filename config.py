@@ -2,4 +2,6 @@ USE_IMAGENET_PRETRAINED = True # otherwise use detectron, but that doesnt seem t
 
 # Change these to match where your annotations and images are
 VCR_IMAGES_DIR = '/datasets01/vcr1/011619/vcr1images'
-VCR_ANNOTS_DIR = '/datasets01/vcr1/011619/data'
+# VCR_ANNOTS_DIR = '/datasets01/vcr1/011619/data'
+# TODO (viswanath): Move this over
+VCR_ANNOTS_DIR = '/private/home/viswanath/datasets/vcr1/data'
