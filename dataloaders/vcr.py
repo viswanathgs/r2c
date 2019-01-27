@@ -76,7 +76,7 @@ class VCR(Dataset):
         if split not in ('test', 'train', 'val'):
             raise ValueError("Split must be in test, train, or val. Supplied {}".format(split))
 
-        if mode not in ('answer', 'rationale'):
+        if mode not in ('answer', 'rationale', 'joint'):
             raise ValueError("Mode must be answer or rationale")
 
         # If all_answers_for_rationale is set, then in rationale mode, the BERT
@@ -203,9 +203,12 @@ class VCR(Dataset):
 
         ###################################################################
         # Load questions and answers
-        answer_label = item['answer_label']
         if self.mode == 'rationale':
-            item['question'] += item['answer_choices'][answer_label]
+            item['question'] += item['answer_choices'][item['answer_label']]
+        elif self.mode == 'joint':
+            item['joint_choices'] = [a + r for a in item['answer_choices'] \
+                                            for r in item['rationale_choices']]
+            item['joint_label'] = item['answer_label'] * 4 + item['rationale_label']
         answer_choices = item['{}_choices'.format(self.mode)]
         dets2use, old_det_to_new_ind = self._get_dets_to_use(item)
 
@@ -219,6 +222,7 @@ class VCR(Dataset):
             # Keys in h5 file are in format [ctx|answer]_rationale[i][j].
             # Pick i based on the answer_label set.
             assert self.mode == 'rationale'
+            answer_label = item['answer_label']
             key = f'{self.mode}{answer_label}'
         else:
             # Keys are in format [ctx|answer]_mode[j]
@@ -233,7 +237,7 @@ class VCR(Dataset):
                 item['objects'],
                 token_indexers=self.token_indexers,
                 pad_ind=0 if self.add_image_as_a_box else -1
-            ) for j in range(4)])
+            ) for j in range(len(answer_choices))])
             instance_dict['question'] = ListField(questions_tokenized)
             instance_dict['question_tags'] = ListField(question_tags)
 

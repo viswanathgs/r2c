@@ -39,9 +39,4 @@ echo "Checkpoint dir: $CHECKPOINT_DIR"
 
 export PYTHONUNBUFFERED=True
 
-EXTRA_ARGS=""
-if [ "$MODE" == rationale ]; then
-  EXTRA_ARGS="$EXTRA_ARGS --rationale"
-fi
-
-python $SOURCE --params $PARAMS --folder $CHECKPOINT_DIR --no_tqdm $EXTRA_ARGS
+python $SOURCE --params $PARAMS --folder $CHECKPOINT_DIR --mode $MODE --no_tqdm

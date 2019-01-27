@@ -51,9 +51,10 @@ parser.add_argument(
     type=str,
 )
 parser.add_argument(
-    '--rationale',
-    action="store_true",
-    help='use rationale',
+    '--mode',
+    type=str,
+    choices=['answer', 'rationale', 'joint'],
+    default='answer',
 )
 parser.add_argument(
     '--folder',
@@ -144,7 +145,7 @@ def main():
             world_size=WORLD_SIZE)
 
     params = Params.from_file(args.params)
-    train, val, test = VCR.splits(mode='rationale' if args.rationale else 'answer',
+    train, val, test = VCR.splits(mode=args.mode,
                                   embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
                                   only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True))
     NUM_GPUS = torch.cuda.device_count()
@@ -175,7 +176,7 @@ def main():
     test_loader = VCRLoader.from_dataset(test, **loader_params)
 
     ARGS_RESET_EVERY = 100
-    print("Loading {} for {}".format(params['model'].get('type', 'WTF?'), 'rationales' if args.rationale else 'answer'), flush=True)
+    print("Loading {} for {}".format(params['model'].get('type', 'WTF?'), args.mode), flush=True)
 
     model = Model.from_params(params=params['model'])
     for submodule in model.detector.backbone.modules():
