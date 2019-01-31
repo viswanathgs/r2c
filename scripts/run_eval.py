@@ -7,6 +7,7 @@ the given model, and then conditioned on those predictions, runs the QA->R task.
 import argparse
 import numpy as np
 import torch
+import pandas as pd
 
 from allennlp.common.params import Params
 from dataloaders.vcr import VCR, VCRLoader
@@ -42,12 +43,19 @@ def parse_args():
         '--ar_model', type=str, default=None,
         help='Path to pytorch model file for Q->AR task',
     )
+    parser.add_argument(
+        '--split', type=str, default='val', choices=['val', 'test'],
+    )
+    parser.add_argument(
+        '--outfile', type=str, default='leaderboard.csv',
+        help='Output file for leaderboard csv',
+    )
     return parser.parse_args()
 
 
-def load_val_set(params, mode, all_answers_for_rationale=False):
+def load_val_set(split, params, mode, all_answers_for_rationale=False):
     return VCR(
-        split='val',
+        split=split,
         mode=mode,
         embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
         only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True),
@@ -70,11 +78,13 @@ def run_eval(model, model_path, ds, batch_size, num_gpus):
         if num_gpus > 1:
             return td
         for k in td:
-            td[k] = {k2: v.cuda(async=True) for k2, v in td[k].items()} if isinstance(td[k], dict) else td[k].cuda(
-                async=True)
+            if k != 'metadata':
+                td[k] = {k2: v.cuda(async=True)
+                        for k2, v in td[k].items()} if isinstance(td[k], dict) else td[k].cuda(async=True)
         return td
 
     model.eval()
+    ids = []
     probs = []
     labels = []
     for b, batch in enumerate(ds_loader):
@@ -82,18 +92,20 @@ def run_eval(model, model_path, ds, batch_size, num_gpus):
             batch = _to_gpu(batch)
             output_dict = model(**batch)
             probs.append(output_dict['label_probs'].detach().cpu().numpy())
-            labels.append(batch['label'].detach().cpu().numpy())
+            ids += [m['annot_id'] for m in batch['metadata']]
+            if 'label' in batch:
+                labels.append(batch['label'].detach().cpu().numpy())
         LOG.info("{} / {}".format(b + 1, len(ds_loader)))
-    labels = np.concatenate(labels, 0)
+    labels = np.concatenate(labels, 0) if len(labels) > 0 else None
     probs = np.concatenate(probs, 0)
-    return labels, probs
+    return labels, probs, ids
 
 
 def compute_baseline(model, params, args):
     if args.answer_model:
-        LOG.info('Running baseline val for Q->A task')
-        answer_val = load_val_set(params, 'answer')
-        answer_gt, answer_probs = run_eval(
+        LOG.info('Running baseline {} for Q->A task'.format(args.split))
+        answer_val = load_val_set(args.split, params, 'answer')
+        answer_gt, answer_probs, _ = run_eval(
             model,
             args.answer_model,
             answer_val,
@@ -105,9 +117,9 @@ def compute_baseline(model, params, args):
         LOG.info('Baseline Q->A accuracy: {}'.format(answer_accuracy))
 
     if args.rationale_model:
-        LOG.info('Running baseline val for QA->R task (with ground-truth answers)')
-        rationale_val = load_val_set(params, 'rationale')
-        rationale_gt, rationale_probs = run_eval(
+        LOG.info('Running baseline {} for QA->R task (with ground-truth answers)'.format(args.split))
+        rationale_val = load_val_set(args.split, params, 'rationale')
+        rationale_gt, rationale_probs, _ = run_eval(
             model,
             args.rationale_model,
             rationale_val,
@@ -119,11 +131,11 @@ def compute_baseline(model, params, args):
         LOG.info('Baseline QA->R accuracy (ground-truth answers): {}'.format(rationale_accuracy))
 
     if args.answer_model and args.rationale_model:
-        LOG.info('Running baseline val for QA->R task (with predicted answers)')
-        rationale_val = load_val_set(params, 'rationale', all_answers_for_rationale=True)
+        LOG.info('Running baseline {} for QA->R task (with predicted answers)'.format(args.split))
+        rationale_val = load_val_set(args.split, params, 'rationale', all_answers_for_rationale=True)
         # Update gt answers with Q->A predictions
         rationale_val.set_answer_labels(answer_pred)
-        rationale_gt, rationale_probs = run_eval(
+        rationale_gt, rationale_probs, _ = run_eval(
             model,
             args.rationale_model,
             rationale_val,
@@ -143,10 +155,10 @@ def compute_baseline(model, params, args):
 
 
 def joint_eval(model, params, args):
-    LOG.info('Running val for Q->AR task with joint model')
+    LOG.info('Running {} for Q->AR task with joint model'.format(args.split))
 
-    ar_val = load_val_set(params, 'joint')
-    ar_gt, ar_probs = run_eval(
+    ar_val = load_val_set(args.split, params, 'joint')
+    ar_gt, ar_probs, _ = run_eval(
         model,
         args.ar_model,
         ar_val,
@@ -172,6 +184,42 @@ def joint_eval(model, params, args):
         answer_accuracy, rationale_accuracy, rationale_accuracy_gt, ar_accuracy))
 
 
+def to_leaderboard_csv(probs, ids, outfile):
+    # Each row with 20 items such as:
+    # [answer, rationale_conditioned_on_a0, rationale_conditioned_on_a1,
+    #          rationale_conditioned_on_a2, rationale_conditioned_on_a3].
+    assert probs.shape[0] == len(ids)
+    assert probs.shape[1] == 20
+
+    group_names = ['answer'] + [f'rationale_conditioned_on_a{i}' for i in range(4)]
+    columns = [f'{group_name}_{i}' for group_name in group_names for i in range(4)]
+    probs_df = pd.DataFrame(data=probs, columns=columns)
+    probs_df['annot_id'] = ids
+    probs_df = probs_df.set_index('annot_id', drop=True)
+    probs_df.to_csv(outfile)
+
+
+def joint_test(model, params, args):
+    LOG.info('Running {} for Q->AR task with joint model'.format(args.split))
+
+    ar_test = load_val_set(args.split, params, 'joint')
+    _, ar_probs, ids = run_eval(
+        model,
+        args.ar_model,
+        ar_test,
+        args.batch_size,
+        num_gpus,
+    )
+
+    # Convert probs to format expected by leaderboard.
+    # Need to prepend with probabilities for answer choices.
+    answer_probs = np.zeros((ar_probs.shape[0], 4), dtype=ar_probs.dtype)
+    for i in range(4):
+        answer_probs[:, i] = np.sum(ar_probs[:, i*4:(i+1)*4], axis=1)
+    probs = np.concatenate([answer_probs, ar_probs], axis=1)
+    to_leaderboard_csv(probs, ids, args.outfile)
+
+
 if __name__ == '__main__':
     args = parse_args()
 
@@ -183,10 +231,14 @@ if __name__ == '__main__':
     num_gpus = torch.cuda.device_count()
     assert num_gpus >= 1, "No CUDA devices found"
     LOG.info('Found {} GPUs'.format(num_gpus))
-    model = DataParallel(model).cuda() if num_gpus > 1 else mode.cuda()
+    model = DataParallel(model).cuda() if num_gpus > 1 else model.cuda()
 
     if args.answer_model or args.rationale_model:
+        assert args.split == 'val', "Not yet supported"
         compute_baseline(model, params, args)
 
     if args.ar_model:
-        joint_eval(model, params, args)
+        if args.split == 'val':
+            joint_eval(model, params, args)
+        else:
+            joint_test(model, params, args)

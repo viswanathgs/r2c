@@ -52,6 +52,7 @@ source activate /private/home/"$USER"/.conda/envs/vcr
 BASEDIR=${1:-"/private/home/$USER/projects/r2c"}
 ANSWER_MODEL=${2:-"/checkpoint/viswanath/r2c/models/baseline_answer/best.th"}
 RATIONALE_MODEL=${3:-"/checkpoint/viswanath/r2c/models/baseline_rationale/best.th"}
+AR_MODEL=${4:-"/checkpoint/viswanath/r2c/models/joint_model/best.th"}
 
 SOURCE="$BASEDIR"/scripts/run_eval.py
 PARAMS="$BASEDIR"/models/multiatt/default.json
@@ -60,4 +61,8 @@ echo "Running job $SLURM_JOB_ID on $SLURMD_NODENAME"
 
 export PYTHONUNBUFFERED=True
 
-srun --label python $SOURCE --params $PARAMS --answer_model $ANSWER_MODEL --rationale_model $RATIONALE_MODEL
+srun --label python $SOURCE \
+  --params $PARAMS \
+  --answer_model $ANSWER_MODEL \
+  --rationale_model $RATIONALE_MODEL \
+  --ar_model $AR_MODEL

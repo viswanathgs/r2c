@@ -7,7 +7,7 @@ import os
 import numpy as np
 import torch
 from allennlp.data.dataset import Batch
-from allennlp.data.fields import TextField, ListField, LabelField, SequenceLabelField, ArrayField
+from allennlp.data.fields import TextField, ListField, LabelField, SequenceLabelField, ArrayField, MetadataField
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import ELMoTokenCharactersIndexer
 from allennlp.data.tokenizers import Token
@@ -96,7 +96,6 @@ class VCR(Dataset):
         # dataset instance.
         # self.vocab = Vocabulary()
 
-        # TODO: load COCO
         with open(os.path.join(os.path.dirname(VCR_ANNOTS_DIR), 'dataloaders', 'cocoontology.json'), 'r') as f:
             coco = json.load(f)
         self.coco_objects = ['__background__'] + [x['name'] for k, x in sorted(coco.items(), key=lambda x: int(x[0]))]
@@ -196,9 +195,6 @@ class VCR(Dataset):
         return dets2use, old_det_to_new_ind
 
     def __getitem__(self, index):
-        if self.split == 'test':
-            raise ValueError("blind test mode not supported quite yet")
-
         item = deepcopy(self.items[index])
 
         ###################################################################
@@ -208,7 +204,8 @@ class VCR(Dataset):
         elif self.mode == 'joint':
             item['joint_choices'] = [a + r for a in item['answer_choices'] \
                                             for r in item['rationale_choices']]
-            item['joint_label'] = item['answer_label'] * 4 + item['rationale_label']
+            if self.split != 'test':
+                item['joint_label'] = item['answer_label'] * 4 + item['rationale_label']
         answer_choices = item['{}_choices'.format(self.mode)]
         dets2use, old_det_to_new_ind = self._get_dets_to_use(item)
 
@@ -252,8 +249,11 @@ class VCR(Dataset):
 
         instance_dict['answers'] = ListField(answers_tokenized)
         instance_dict['answer_tags'] = ListField(answer_tags)
-        instance_dict['label'] = LabelField(item['{}_label'.format(self.mode)], skip_indexing=True)
-        instance_dict['ind'] = LabelField(index, skip_indexing=True)
+        if self.split != 'test':
+            instance_dict['label'] = LabelField(item['{}_label'.format(self.mode)], skip_indexing=True)
+        instance_dict['metadata'] = MetadataField({'annot_id': item['annot_id'], 'ind': index, 'movie': item['movie'],
+                                                   'img_fn': item['img_fn'],
+                                                   'question_number': item['question_number']})
 
         ###################################################################
         # Load image now and rescale it. Might have to subtract the mean and whatnot here too.
@@ -267,7 +267,7 @@ class VCR(Dataset):
         with open(os.path.join(VCR_IMAGES_DIR, item['metadata_fn']), 'r') as f:
             metadata = json.load(f)
 
-        #[nobj, 14, 14]
+        # [nobj, 14, 14]
         segms = np.stack([make_mask(mask_size=14, box=metadata['boxes'][i], polygons_list=metadata['segms'][i])
                           for i in dets2use])
 
@@ -317,8 +317,9 @@ def collate_fn(data, to_gpu=False):
 
     if to_gpu:
         for k in td:
-            td[k] = {k2: v.cuda(async=True) for k2, v in td[k].items()} if isinstance(td[k], dict) else td[k].cuda(
-                async=True)
+            if k != 'metadata':
+                td[k] = {k2: v.cuda(async=True)
+                        for k2, v in td[k].items()} if isinstance(td[k], dict) else td[k].cuda(async=True)
     # # No nested dicts
     # for k in sorted(td.keys()):
     #     if isinstance(td[k], dict):
@@ -344,7 +345,7 @@ class VCRLoader(torch.utils.data.DataLoader):
             sampler=sampler,
             shuffle=(data.is_train and sampler is None),
             num_workers=num_workers,
-            collate_fn=partial(collate_fn, to_gpu=(num_workers==0)),
+            collate_fn=partial(collate_fn, to_gpu=(num_workers == 0)),
             drop_last=data.is_train,
             pin_memory=False,
             **kwargs,
