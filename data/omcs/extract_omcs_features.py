@@ -83,7 +83,7 @@ def omcs_iter(omcs, tokenizer, max_seq_length):
         yield InputExample(unique_id=i, text_a=tokens, text_b=None), alignment
 
 
-def load_omcs_embeddings(h5_filename):
+def load_omcs_embeddings(h5_filename, dtype=np.float16):
     '''
     Helper to load OMCS embeddings and the corresponding text.
     '''
@@ -92,7 +92,7 @@ def load_omcs_embeddings(h5_filename):
     with h5py.File(h5_filename, 'r') as h5:
         for i in range(len(h5)):
             metadata = json.loads(h5[f'{i}/metadata'][()])
-            embedding = np.array(h5[f'{i}']['embedding'], dtype=np.float16)
+            embedding = np.array(h5[f'{i}']['embedding'], dtype=dtype)
             omcs_embeddings.append(embedding)
             omcs_text.append(metadata['text'])
     return omcs_text, omcs_embeddings
