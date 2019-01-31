@@ -95,22 +95,25 @@ flags.DEFINE_integer(
 
 ####
 
-if not os.path.exists('uncased_L-12_H-768_A-12'):
-    response = requests.get('https://storage.googleapis.com/bert_models/2018_10_18/uncased_L-12_H-768_A-12.zip',
-                            stream=True)
-    with open('uncased_L-12_H-768_A-12.zip', "wb") as handle:
-        for chunk in response.iter_content(chunk_size=512):
-            if chunk:  # filter out keep-alive new chunks
-                handle.write(chunk)
-    with zipfile.ZipFile('uncased_L-12_H-768_A-12.zip') as zf:
-        zf.extractall()
+def load_bert():
+    if not os.path.exists('uncased_L-12_H-768_A-12'):
+        response = requests.get('https://storage.googleapis.com/bert_models/2018_10_18/uncased_L-12_H-768_A-12.zip',
+                                stream=True)
+        with open('uncased_L-12_H-768_A-12.zip', "wb") as handle:
+            for chunk in response.iter_content(chunk_size=512):
+                if chunk:  # filter out keep-alive new chunks
+                    handle.write(chunk)
+        with zipfile.ZipFile('uncased_L-12_H-768_A-12.zip') as zf:
+            zf.extractall()
 
-tf.logging.info("BERT HAS BEEN DOWNLOADED")
-mypath = os.getcwd()
-bert_config_file = os.path.join(mypath, 'uncased_L-12_H-768_A-12', 'bert_config.json')
-vocab_file = os.path.join(mypath, 'uncased_L-12_H-768_A-12', 'vocab.txt')
-# init_checkpoint = os.path.join(mypath, 'uncased_L-12_H-768_A-12', 'bert_model.ckpt')
-bert_config = modeling.BertConfig.from_json_file(bert_config_file)
+    tf.logging.info("BERT HAS BEEN DOWNLOADED")
+
+    mypath = os.getcwd()
+    bert_config_file = os.path.join(mypath, 'uncased_L-12_H-768_A-12', 'bert_config.json')
+    vocab_file = os.path.join(mypath, 'uncased_L-12_H-768_A-12', 'vocab.txt')
+    # init_checkpoint = os.path.join(mypath, 'uncased_L-12_H-768_A-12', 'bert_model.ckpt')
+    bert_config = modeling.BertConfig.from_json_file(bert_config_file)
+    return bert_config, vocab_file
 
 
 def model_fn_builder(bert_config, init_checkpoint, layer_indexes, use_tpu,
@@ -183,92 +186,6 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
             tokens_b.pop()
 
 
-tf.logging.set_verbosity(tf.logging.INFO)
-
-layer_indexes = [int(x) for x in FLAGS.layers.split(",")]
-
-tokenizer = tokenization.FullTokenizer(
-    vocab_file=vocab_file, do_lower_case=FLAGS.do_lower_case)
-########################################
-
-if FLAGS.joint:
-    all_answers_for_rationale = False
-    data_iter_ = data_iter_joint
-else:
-    all_answers_for_rationale = (FLAGS.split == 'test') or FLAGS.all_answers_for_rationale
-    data_iter_ = data_iter if not all_answers_for_rationale else data_iter_test
-examples = [x for x in data_iter_(
-                                 os.path.join(VCR_ANNOTS_DIR, f'{FLAGS.split}.jsonl'),
-                                 tokenizer=tokenizer,
-                                 max_seq_length=FLAGS.max_seq_length,
-                                 endingonly=FLAGS.endingonly)]
-tf.logging.info('Obtained {} examples'.format(len(examples)))
-features = convert_examples_to_features(
-    examples=[x[0] for x in examples], seq_length=FLAGS.max_seq_length, tokenizer=tokenizer)
-tf.logging.info('Converted examples to features')
-unique_id_to_ind = {}
-for i, feature in enumerate(features):
-    unique_id_to_ind[feature.unique_id] = i
-
-############################ Tensorflow boilerplate
-is_per_host = tf.contrib.tpu.InputPipelineConfig.PER_HOST_V2
-run_config = tf.contrib.tpu.RunConfig(
-    master=FLAGS.master,
-    tpu_config=tf.contrib.tpu.TPUConfig(
-        num_shards=FLAGS.num_tpu_cores,
-        per_host_input_for_training=is_per_host))
-
-model_fn = model_fn_builder(
-    bert_config=bert_config,
-    init_checkpoint=FLAGS.init_checkpoint,
-    layer_indexes=layer_indexes,
-    use_tpu=FLAGS.use_tpu,
-    use_one_hot_embeddings=FLAGS.use_one_hot_embeddings)
-
-# If TPU is not available, this will fall back to normal Estimator on CPU
-# or GPU.
-estimator = tf.contrib.tpu.TPUEstimator(
-    use_tpu=FLAGS.use_tpu,
-    model_fn=model_fn,
-    config=run_config,
-    predict_batch_size=FLAGS.batch_size)
-
-if FLAGS.joint:
-    output_h5_joint = h5py.File(f'../{FLAGS.name}_joint_{FLAGS.split}.h5', 'w')
-    subgroup_names = [f'joint{i}' for i in range(16)]
-else:
-    output_h5_qa = h5py.File(f'../{FLAGS.name}_answer_{FLAGS.split}.h5', 'w')
-    if all_answers_for_rationale:
-        # For test split, all_answers_for_rationale is the default. Avoid
-        # appending '_all' to the filename for backward compatibility.
-        output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}_all.h5', 'w') \
-                if FLAGS.split != 'test' else h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}.h5', 'w')
-        subgroup_names = [
-            'answer0',
-            'answer1',
-            'answer2',
-            'answer3'] + [f'rationale{x}{y}' for x in range(4) for y in range(4)]
-    else:
-        output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}.h5', 'w')
-        subgroup_names = [
-            'answer0',
-            'answer1',
-            'answer2',
-            'answer3',
-            'rationale0',
-            'rationale1',
-            'rationale2',
-            'rationale3',
-        ]
-
-for i in range(len(examples) // len(subgroup_names)):
-    if FLAGS.joint:
-        output_h5_joint.create_group(f'{i}')
-    else:
-        output_h5_qa.create_group(f'{i}')
-        output_h5_qar.create_group(f'{i}')
-
-
 def alignment_gather(alignment, layer):
     reverse_alignment = [[i for i, x in enumerate(alignment) if x == j] for j in range(max(alignment) + 1)]
     output_embs = np.zeros((max(alignment) + 1, layer.shape[1]), dtype=np.float16)
@@ -293,41 +210,127 @@ def chunk(items, chunk_size):
         yield items[i:i + chunk_size]
 
 
-assert len(features) % len(subgroup_names) == 0
-if FLAGS.chunk_size > 0:
-    chunk_size = min(FLAGS.chunk_size * len(subgroup_names), len(features))
-else:
-    chunk_size = len(features)
-num_chunks = math.ceil(len(features) / chunk_size)
+tf.logging.set_verbosity(tf.logging.INFO)
 
+if __name__ == '__main__':
+    layer_indexes = [int(x) for x in FLAGS.layers.split(",")]
 
-for chunk_id, feats in enumerate(chunk(features, chunk_size)):
-    tf.logging.info("Processing chunk {} / {}".format(chunk_id + 1, num_chunks))
+    bert_config, vocab_file = load_bert()
+    tokenizer = tokenization.FullTokenizer(
+        vocab_file=vocab_file, do_lower_case=FLAGS.do_lower_case)
+    ########################################
 
-    input_fn = input_fn_builder(
-        features=feats, seq_length=FLAGS.max_seq_length)
+    if FLAGS.joint:
+        all_answers_for_rationale = False
+        data_iter_ = data_iter_joint
+    else:
+        all_answers_for_rationale = (FLAGS.split == 'test') or FLAGS.all_answers_for_rationale
+        data_iter_ = data_iter if not all_answers_for_rationale else data_iter_test
+    examples = [x for x in data_iter_(
+                                     os.path.join(VCR_ANNOTS_DIR, f'{FLAGS.split}.jsonl'),
+                                     tokenizer=tokenizer,
+                                     max_seq_length=FLAGS.max_seq_length,
+                                     endingonly=FLAGS.endingonly)]
+    tf.logging.info('Obtained {} examples'.format(len(examples)))
+    features = convert_examples_to_features(
+        examples=[x[0] for x in examples], seq_length=FLAGS.max_seq_length, tokenizer=tokenizer)
+    tf.logging.info('Converted examples to features')
+    unique_id_to_ind = {}
+    for i, feature in enumerate(features):
+        unique_id_to_ind[feature.unique_id] = i
 
-    for result in tqdm(estimator.predict(input_fn, yield_single_examples=True)):
-        ind = unique_id_to_ind[int(result["unique_id"])]
+    ############################ Tensorflow boilerplate
+    is_per_host = tf.contrib.tpu.InputPipelineConfig.PER_HOST_V2
+    run_config = tf.contrib.tpu.RunConfig(
+        master=FLAGS.master,
+        tpu_config=tf.contrib.tpu.TPUConfig(
+            num_shards=FLAGS.num_tpu_cores,
+            per_host_input_for_training=is_per_host))
 
-        text, ctx_alignment, choice_alignment = examples[ind]
-        # just one layer for now
-        layer = result['layer_output_0']
-        ex2use = ind//len(subgroup_names)
-        subgroup_name = subgroup_names[ind % len(subgroup_names)]
+    model_fn = model_fn_builder(
+        bert_config=bert_config,
+        init_checkpoint=FLAGS.init_checkpoint,
+        layer_indexes=layer_indexes,
+        use_tpu=FLAGS.use_tpu,
+        use_one_hot_embeddings=FLAGS.use_one_hot_embeddings)
 
-        if subgroup_name.startswith('answer'):
-            group2use = output_h5_qa[f'{ex2use}']
-        elif subgroup_name.startswith('rationale'):
-            group2use = output_h5_qar[f'{ex2use}']
+    # If TPU is not available, this will fall back to normal Estimator on CPU
+    # or GPU.
+    estimator = tf.contrib.tpu.TPUEstimator(
+        use_tpu=FLAGS.use_tpu,
+        model_fn=model_fn,
+        config=run_config,
+        predict_batch_size=FLAGS.batch_size)
+
+    if FLAGS.joint:
+        output_h5_joint = h5py.File(f'../{FLAGS.name}_joint_{FLAGS.split}.h5', 'w')
+        subgroup_names = [f'joint{i}' for i in range(16)]
+    else:
+        output_h5_qa = h5py.File(f'../{FLAGS.name}_answer_{FLAGS.split}.h5', 'w')
+        if all_answers_for_rationale:
+            # For test split, all_answers_for_rationale is the default. Avoid
+            # appending '_all' to the filename for backward compatibility.
+            output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}_all.h5', 'w') \
+                    if FLAGS.split != 'test' else h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}.h5', 'w')
+            subgroup_names = [
+                'answer0',
+                'answer1',
+                'answer2',
+                'answer3'] + [f'rationale{x}{y}' for x in range(4) for y in range(4)]
         else:
-            group2use = output_h5_joint[f'{ex2use}']
-        alignment_ctx = [-1] + ctx_alignment
+            output_h5_qar = h5py.File(f'../{FLAGS.name}_rationale_{FLAGS.split}.h5', 'w')
+            subgroup_names = [
+                'answer0',
+                'answer1',
+                'answer2',
+                'answer3',
+                'rationale0',
+                'rationale1',
+                'rationale2',
+                'rationale3',
+            ]
 
-        if FLAGS.endingonly:
-            # just a single span here
-            group2use.create_dataset(f'answer_{subgroup_name}', data=alignment_gather(alignment_ctx, layer))
+    for i in range(len(examples) // len(subgroup_names)):
+        if FLAGS.joint:
+            output_h5_joint.create_group(f'{i}')
         else:
-            alignment_answer = [-1] + [-1 for i in range(len(ctx_alignment))] + [-1] + choice_alignment
-            group2use.create_dataset(f'ctx_{subgroup_name}', data=alignment_gather(alignment_ctx, layer))
-            group2use.create_dataset(f'answer_{subgroup_name}', data=alignment_gather(alignment_answer, layer))
+            output_h5_qa.create_group(f'{i}')
+            output_h5_qar.create_group(f'{i}')
+
+    assert len(features) % len(subgroup_names) == 0
+    if FLAGS.chunk_size > 0:
+        chunk_size = min(FLAGS.chunk_size * len(subgroup_names), len(features))
+    else:
+        chunk_size = len(features)
+    num_chunks = math.ceil(len(features) / chunk_size)
+
+    for chunk_id, feats in enumerate(chunk(features, chunk_size)):
+        tf.logging.info("Processing chunk {} / {}".format(chunk_id + 1, num_chunks))
+
+        input_fn = input_fn_builder(
+            features=feats, seq_length=FLAGS.max_seq_length)
+
+        for result in tqdm(estimator.predict(input_fn, yield_single_examples=True)):
+            ind = unique_id_to_ind[int(result["unique_id"])]
+
+            text, ctx_alignment, choice_alignment = examples[ind]
+            # just one layer for now
+            layer = result['layer_output_0']
+            ex2use = ind//len(subgroup_names)
+            subgroup_name = subgroup_names[ind % len(subgroup_names)]
+
+            if subgroup_name.startswith('answer'):
+                group2use = output_h5_qa[f'{ex2use}']
+            elif subgroup_name.startswith('rationale'):
+                group2use = output_h5_qar[f'{ex2use}']
+            else:
+                group2use = output_h5_joint[f'{ex2use}']
+            alignment_ctx = [-1] + ctx_alignment
+
+            if FLAGS.endingonly:
+                # just a single span here
+                group2use.create_dataset(f'answer_{subgroup_name}', data=alignment_gather(alignment_ctx, layer))
+            else:
+                alignment_answer = [-1] + [-1 for i in range(len(ctx_alignment))] + [-1] + choice_alignment
+                group2use.create_dataset(f'ctx_{subgroup_name}', data=alignment_gather(alignment_ctx, layer))
+                group2use.create_dataset(f'answer_{subgroup_name}', data=alignment_gather(alignment_answer, layer))
