@@ -25,7 +25,43 @@ from functools import partial
 GENDER_NEUTRAL_NAMES = ['Casey', 'Riley', 'Jessie', 'Jackie', 'Avery', 'Jaime', 'Peyton', 'Kerry', 'Jody', 'Kendall',
                         'Peyton', 'Skyler', 'Frankie', 'Pat', 'Quinn']
 
-# {"movie": "3015_CHARLIE_ST_CLOUD", "objects": ["person", "person", "person", "car"], "interesting_scores": [0], "answer_likelihood": "possible", "img_fn": "lsmdc_3015_CHARLIE_ST_CLOUD/3015_CHARLIE_ST_CLOUD_00.23.57.935-00.24.00.783@0.jpg", "metadata_fn": "lsmdc_3015_CHARLIE_ST_CLOUD/3015_CHARLIE_ST_CLOUD_00.23.57.935-00.24.00.783@0.json", "answer_orig": "No she does not", "question_orig": "Does 3 feel comfortable?", "rationale_orig": "She is standing with her arms crossed and looks disturbed", "question": ["Does", [2], "feel", "comfortable", "?"], "answer_match_iter": [3, 0, 2, 1], "answer_sources": [3287, 0, 10184, 2260], "answer_choices": [["Yes", "because", "the", "person", "sitting", "next", "to", "her", "is", "smiling", "."], ["No", "she", "does", "not", "."], ["Yes", ",", "she", "is", "wearing", "something", "with", "thin", "straps", "."], ["Yes", ",", "she", "is", "cold", "."]], "answer_label": 1, "rationale_choices": [["There", "is", "snow", "on", "the", "ground", ",", "and", "she", "is", "wearing", "a", "coat", "and", "hate", "."], ["She", "is", "standing", "with", "her", "arms", "crossed", "and", "looks", "disturbed", "."], ["She", "is", "sitting", "very", "rigidly", "and", "tensely", "on", "the", "edge", "of", "the", "bed", ".", "her", "posture", "is", "not", "relaxed", "and", "her", "face", "looks", "serious", "."], [[2], "is", "laying", "in", "bed", "but", "not", "sleeping", ".", "she", "looks", "sad", "and", "is", "curled", "into", "a", "ball", "."]], "rationale_sources": [1921, 0, 9750, 25743], "rationale_match_iter": [3, 0, 2, 1], "rationale_label": 1, "img_id": "train-0", "question_number": 0, "annot_id": "train-0", "match_fold": "train-0", "match_index": 0}
+# Here's an example jsonl
+# {
+# "movie": "3015_CHARLIE_ST_CLOUD",
+# "objects": ["person", "person", "person", "car"],
+# "interesting_scores": [0],
+# "answer_likelihood": "possible",
+# "img_fn": "lsmdc_3015_CHARLIE_ST_CLOUD/3015_CHARLIE_ST_CLOUD_00.23.57.935-00.24.00.783@0.jpg",
+# "metadata_fn": "lsmdc_3015_CHARLIE_ST_CLOUD/3015_CHARLIE_ST_CLOUD_00.23.57.935-00.24.00.783@0.json",
+# "answer_orig": "No she does not",
+# "question_orig": "Does 3 feel comfortable?",
+# "rationale_orig": "She is standing with her arms crossed and looks disturbed",
+# "question": ["Does", [2], "feel", "comfortable", "?"],
+# "answer_match_iter": [3, 0, 2, 1],
+# "answer_sources": [3287, 0, 10184, 2260],
+# "answer_choices": [
+#     ["Yes", "because", "the", "person", "sitting", "next", "to", "her", "is", "smiling", "."],
+#     ["No", "she", "does", "not", "."],
+#     ["Yes", ",", "she", "is", "wearing", "something", "with", "thin", "straps", "."],
+#     ["Yes", ",", "she", "is", "cold", "."]],
+# "answer_label": 1,
+# "rationale_choices": [
+#     ["There", "is", "snow", "on", "the", "ground", ",", "and",
+#         "she", "is", "wearing", "a", "coat", "and", "hate", "."],
+#     ["She", "is", "standing", "with", "her", "arms", "crossed", "and", "looks", "disturbed", "."],
+#     ["She", "is", "sitting", "very", "rigidly", "and", "tensely", "on", "the", "edge", "of", "the",
+#         "bed", ".", "her", "posture", "is", "not", "relaxed", "and", "her", "face", "looks", "serious", "."],
+#     [[2], "is", "laying", "in", "bed", "but", "not", "sleeping", ".",
+#         "she", "looks", "sad", "and", "is", "curled", "into", "a", "ball", "."]],
+# "rationale_sources": [1921, 0, 9750, 25743],
+# "rationale_match_iter": [3, 0, 2, 1],
+# "rationale_label": 1,
+# "img_id": "train-0",
+# "question_number": 0,
+# "annot_id": "train-0",
+# "match_fold": "train-0",
+# "match_index": 0,
+# }
 
 def _fix_tokenization(tokenized_sent, bert_embs, old_det_to_new_ind, obj_to_type, token_indexers, pad_ind=-1):
     """
@@ -62,7 +98,26 @@ def _fix_tokenization(tokenized_sent, bert_embs, old_det_to_new_ind, obj_to_type
 class VCR(Dataset):
     def __init__(self, split, mode, only_use_relevant_dets=True,
             add_image_as_a_box=True, embs_to_load='bert_da',
+            conditioned_answer_choice=None,
             all_answers_for_rationale=False):
+        """
+
+        :param split: train, val, or test
+        :param mode: answer or rationale
+        :param only_use_relevant_dets: True, if we will only use the detections mentioned in the question and answer.
+                                       False, if we should use all detections.
+        :param add_image_as_a_box:     True to add the image in as an additional 'detection'. It'll go first in the list
+                                       of objects.
+        :param embs_to_load: Which precomputed embeddings to load.
+        :param conditioned_answer_choice: If you're in test mode, the answer labels aren't provided, which could be
+                                          a problem for the QA->R task. Pass in 'conditioned_answer_choice=i'
+                                          to always condition on the i-th answer.
+        :param all_answers_for_rationale: If set, then in rationale mode, the BERT
+                                          embeddings are generated for all answers x rationales pairs and not
+                                          just for the correct answer. This is irrelevant in answer mode, and
+                                          is done by default for test split since we don't know the correct
+                                          answer.
+        """
         self.split = split
         self.mode = mode
         self.only_use_relevant_dets = only_use_relevant_dets
@@ -79,13 +134,11 @@ class VCR(Dataset):
         if mode not in ('answer', 'rationale', 'joint'):
             raise ValueError("Mode must be answer or rationale")
 
-        # If all_answers_for_rationale is set, then in rationale mode, the BERT
-        # embeddings are generated for all answers x rationales pairs and not
-        # just for the correct answer. This is irrelevant in answer mode, and
-        # is done by default for test split since we don't know the correct
-        # answer.
         if mode == 'rationale':
             self.all_answers_for_rationale = (split == 'test') or all_answers_for_rationale
+            if conditioned_answer_choice is not None:
+                answer_labels = [conditioned_answer_choice] * len(self.items)
+                self.set_answer_labels(answer_labels)
         else:
             self.all_answers_for_rationale = False
 
@@ -150,6 +203,18 @@ class VCR(Dataset):
         val = cls(split='val', **kwargs_copy)
         test = cls(split='test', **kwargs_copy)
         return train, val, test
+
+    @classmethod
+    def eval_splits(cls, **kwargs):
+        """ Helper method to generate splits of the dataset. Use this for testing, because it will
+            condition on everything."""
+        for forbidden_key in ['mode', 'split', 'conditioned_answer_choice']:
+            if forbidden_key in kwargs:
+                raise ValueError(f"don't supply {forbidden_key} to eval_splits()")
+
+        stuff_to_return = [cls(split='test', mode='answer', **kwargs)] + [
+            cls(split='test', mode='rationale', conditioned_answer_choice=i, **kwargs) for i in range(4)]
+        return tuple(stuff_to_return)
 
     def __len__(self):
         return len(self.items)
