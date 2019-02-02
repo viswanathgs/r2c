@@ -62,7 +62,8 @@ def _fix_tokenization(tokenized_sent, bert_embs, old_det_to_new_ind, obj_to_type
 class VCR(Dataset):
     def __init__(self, split, mode, only_use_relevant_dets=True,
             add_image_as_a_box=True, embs_to_load='bert_da',
-            all_answers_for_rationale=False):
+            all_answers_for_rationale=False,
+            use_omcs=False):
         self.split = split
         self.mode = mode
         self.only_use_relevant_dets = only_use_relevant_dets
@@ -111,6 +112,12 @@ class VCR(Dataset):
             self.h5fn = os.path.join(VCR_ANNOTS_DIR, f'{self.embs_to_load}_{self.mode}_{self.split}.h5')
         print("Loading embeddings from {}".format(self.h5fn), flush=True)
         self.h5 = None
+
+        self.h5fn_omcs = None
+        if use_omcs:
+            self.h5fn_omcs = os.path.join(VCR_ANNOTS_DIR, 'omcs',
+                os.path.basename(self.h5fn).split('.')[0] + '_omcs.h5')
+            print("Loading OMCS embeddings from {}".format(self.h5fn_omcs))
 
     def set_answer_labels(self, answer_labels):
         """
@@ -218,6 +225,11 @@ class VCR(Dataset):
         with h5py.File(self.h5fn, 'r') as h5:
             grp_items = {k: np.array(v, dtype=np.float16) for k,v in h5[str(index)].items()}
 
+        omcs_items = None
+        if self.h5fn_omcs is not None:
+            with h5py.File(self.h5fn_omcs, 'r') as h5_omcs:
+                omcs_items = {k: np.array(v, dtype=np.float16) for k,v in h5_omcs[str(index)].items()}
+
         if self.all_answers_for_rationale:
             # Keys in h5 file are in format [ctx|answer]_rationale[i][j].
             # Pick i based on the answer_label set.
@@ -230,9 +242,16 @@ class VCR(Dataset):
 
         instance_dict = {}
         if 'endingonly' not in self.embs_to_load:
+            if omcs_items is None:
+                ctx_embs = [grp_items[f'ctx_{key}{j}'] for j in range(len(answer_choices))]
+            else:
+                ctx_embs = [
+                    np.hstack([grp_items[f'ctx_{key}{j}'], omcs_items[f'ctx_{key}{j}']])
+                    for j in range(len(answer_choices))
+                ]
             questions_tokenized, question_tags = zip(*[_fix_tokenization(
                 item['question'],
-                grp_items[f'ctx_{key}{j}'],
+                ctx_embs[j],
                 old_det_to_new_ind,
                 item['objects'],
                 token_indexers=self.token_indexers,
@@ -241,9 +260,16 @@ class VCR(Dataset):
             instance_dict['question'] = ListField(questions_tokenized)
             instance_dict['question_tags'] = ListField(question_tags)
 
+        if omcs_items is None:
+            answer_embs = [grp_items[f'answer_{key}{j}'] for j in range(len(answer_choices))]
+        else:
+            answer_embs = [
+                np.hstack([grp_items[f'answer_{key}{j}'], omcs_items[f'answer_{key}{j}']])
+                for j in range(len(answer_choices))
+            ]
         answers_tokenized, answer_tags = zip(*[_fix_tokenization(
             answer,
-            grp_items[f'answer_{key}{j}'],
+            answer_embs[j],
             old_det_to_new_ind,
             item['objects'],
             token_indexers=self.token_indexers,
@@ -350,14 +376,3 @@ class VCRLoader(torch.utils.data.DataLoader):
             **kwargs,
         )
         return loader
-
-
-if __name__ == '__main__':
-
-    train, val, test = VCR.splits()
-    for i in range(len(train)):
-        res = train[i]
-        print("done with {}".format(i))
-    # NUM_GPUS = torch.cuda.device_count()
-    # train_loader = VCRLoader.from_dataset(val, batch_size=32, num_gpus=NUM_GPUS,
-    #                                         num_workers=5 if NUM_GPUS > 1 else 0)
