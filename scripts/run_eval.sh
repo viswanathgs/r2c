@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: sbatch run_eval.sh <PARAM_FILE> <BASE_DIR_TO_R2C_SOURCE> <ANSWER_MODEL> <RATIONALE_MODEL>
+# Usage: sbatch run_eval.sh <PARAM_FILE> <BASE_DIR_TO_R2C_SOURCE> <ANSWER_MODEL> <RATIONALE_MODEL> <JOINT_MODEL>
 #
 # This needs rationale val BERT features generated for all answer and rationale combinations, which can
 # be found in `VCR_ANNOTS_DIR`. The VCR dataset for BERT finetuning and and the trained BERT models
@@ -54,6 +54,7 @@ PARAM_FILE=${1:-"default"}
 BASEDIR=${2:-"/private/home/$USER/projects/r2c"}
 ANSWER_MODEL=${3:-"/checkpoint/viswanath/r2c/models/baseline_answer/best.th"}
 RATIONALE_MODEL=${4:-"/checkpoint/viswanath/r2c/models/baseline_rationale/best.th"}
+AR_MODEL=${5:-"/checkpoint/viswanath/r2c/models/joint_model/best.th"}
 
 SOURCE="$BASEDIR"/scripts/run_eval.py
 PARAMS="$BASEDIR"/models/multiatt/"$PARAM_FILE".json
@@ -62,4 +63,8 @@ echo "Running job $SLURM_JOB_ID on $SLURMD_NODENAME"
 
 export PYTHONUNBUFFERED=True
 
-srun --label python $SOURCE --params $PARAMS --answer_model $ANSWER_MODEL --rationale_model $RATIONALE_MODEL
+srun --label python $SOURCE \
+  --params $PARAMS \
+  --answer_model $ANSWER_MODEL \
+  --rationale_model $RATIONALE_MODEL \
+  --ar_model $AR_MODEL

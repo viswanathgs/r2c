@@ -161,8 +161,9 @@ def main():
         if NUM_GPUS > 1:
             return td
         for k in td:
-            td[k] = {k2: v.cuda(async=True) for k2, v in td[k].items()} if isinstance(td[k], dict) else td[k].cuda(
-                async=True)
+            if k != 'metadata':
+                td[k] = {k2: v.cuda(async=True)
+                        for k2, v in td[k].items()} if isinstance(td[k], dict) else td[k].cuda(async=True)
         return td
 
     num_workers = 4 * NUM_GPUS if args.num_workers is None else args.num_workers
