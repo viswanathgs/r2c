@@ -145,9 +145,12 @@ def main():
             world_size=WORLD_SIZE)
 
     params = Params.from_file(args.params)
-    train, val, test = VCR.splits(mode=args.mode,
-                                  embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
-                                  only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True))
+    train, val, test = VCR.splits(
+        mode=args.mode,
+        embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
+        only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True),
+        use_omcs=params['dataset_reader'].get('use_omcs', True),
+    )
     NUM_GPUS = torch.cuda.device_count()
     NUM_CPUS = mp.cpu_count()
     print("Found {} GPUs and {} CPUs".format(NUM_GPUS, NUM_CPUS), flush=True)

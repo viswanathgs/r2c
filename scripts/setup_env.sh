@@ -10,6 +10,7 @@ module load cuda/9.0
 module load NCCL/2.2.12-1-cuda.9.0
 module load cudnn/v7.0-cuda.9.0
 module load anaconda3/5.0.1
+module load FAISS/010818/gcc.5.4.0/anaconda3.5.0.1
 
 conda create --clone fair_env_latest_py3 -n vcr
 source activate vcr

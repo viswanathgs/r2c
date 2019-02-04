@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: sbatch launch_distributed.sh <MODE> <BASE_DIR_TO_R2C_SOURCE> <CHECKPOINT_DIR>
+# Usage: sbatch launch_distributed.sh <MODE> <PARAM_FILE> <BASE_DIR_TO_R2C_SOURCE> <CHECKPOINT_DIR>
 # Make sure to have run setup_env.sh first to create the environment.
 
 #SBATCH --job-name=r2c_dist
@@ -17,9 +17,10 @@
 #SBATCH --open-mode=append
 
 MODE=${1:-"answer"}
-BASEDIR=${2:-"/private/home/$USER/projects/r2c"}
-CHECKPOINT_DIR=${3:-"/checkpoint/$USER/r2c/$SLURM_JOB_ID"}
+PARAM_FILE=${2:-"default"}
+BASEDIR=${3:-"/private/home/$USER/projects/r2c"}
+CHECKPOINT_DIR=${4:-"/checkpoint/$USER/r2c/$SLURM_JOB_ID"}
 mkdir -p $CHECKPOINT_DIR
 
 echo "Starting distributed job $SLURM_JOB_ID on $SLURM_NNODES nodes: $SLURM_NODELIST"
-srun --label "$BASEDIR"/scripts/wrapper.sh $MODE $BASEDIR $CHECKPOINT_DIR
+srun --label "$BASEDIR"/scripts/wrapper.sh $MODE $PARAM_FILE $BASEDIR $CHECKPOINT_DIR

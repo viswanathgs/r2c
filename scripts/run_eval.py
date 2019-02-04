@@ -60,6 +60,7 @@ def load_val_set(split, params, mode, all_answers_for_rationale=False):
         embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
         only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True),
         all_answers_for_rationale=all_answers_for_rationale,
+        use_omcs=params['dataset_reader'].get('use_omcs', False),
     )
 
 
