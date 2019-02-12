@@ -125,6 +125,8 @@ def enrich_vcr_with_omcs(args):
         args.vcr_h5, len(vcr_h5)))
 
     outfile = os.path.basename(args.vcr_h5).split('.')[0] + '_omcs.h5'
+    if not os.path.exists(args.outdir):
+        os.makedirs(args.outdir)
     outfile = os.path.join(args.outdir, outfile)
     LOG.info('Writing output OMCS embeddings to {}'.format(outfile))
     output_h5 = h5py.File(outfile, 'w')

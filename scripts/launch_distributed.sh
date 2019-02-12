@@ -6,7 +6,7 @@
 #SBATCH --job-name=r2c_dist
 #SBATCH --output=/checkpoint/%u/logs/r2c-%j.out
 #SBATCH --error=/checkpoint/%u/logs/r2c-%j.err
-#SBATCH --partition=learnfair
+#SBATCH --partition=uninterrupted
 #SBATCH --nodes=4
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
