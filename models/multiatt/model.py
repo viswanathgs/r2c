@@ -16,8 +16,9 @@ from utils.detector import SimpleDetector
 from allennlp.nn.util import masked_softmax, weighted_sum, replace_masked_values
 from allennlp.nn import InitializerApplicator
 
-@Model.register("MultiHopAttentionQA")
-class AttentionQA(Model):
+
+@Model.register("MultiHopAttentionQATrunk")
+class AttentionQATrunk(Model):
     def __init__(self,
                  span_encoder: Seq2SeqEncoder,
                  reasoning_encoder: Seq2SeqEncoder,
@@ -37,7 +38,7 @@ class AttentionQA(Model):
         # pretrained and stored in h5 files per dataset instance. Just pass
         # a dummy vocab instance for init.
         vocab = Vocabulary()
-        super(AttentionQA, self).__init__(vocab)
+        super(AttentionQATrunk, self).__init__(vocab)
 
         self.detector = SimpleDetector(pretrained=True, average_pool=True, semantic=class_embs, final_dim=512)
         ###################################################################################################
@@ -63,19 +64,10 @@ class AttentionQA(Model):
         self.pool_reasoning = pool_reasoning
         self.pool_answer = pool_answer
         self.pool_question = pool_question
-        dim = sum([d for d, to_pool in [(reasoning_encoder.get_output_dim(), self.pool_reasoning),
+        self.output_dim = sum([d for d, to_pool in [(reasoning_encoder.get_output_dim(), self.pool_reasoning),
                                         (span_encoder.get_output_dim(), self.pool_answer),
                                         (span_encoder.get_output_dim(), self.pool_question)] if to_pool])
 
-        self.final_mlp = torch.nn.Sequential(
-            torch.nn.Dropout(input_dropout, inplace=False),
-            torch.nn.Linear(dim, hidden_dim_maxpool),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Dropout(input_dropout, inplace=False),
-            torch.nn.Linear(hidden_dim_maxpool, 1),
-        )
-        self._accuracy = CategoricalAccuracy()
-        self._loss = torch.nn.CrossEntropyLoss()
         initializer(self)
 
     def _collect_obj_reps(self, span_tags, object_reps):
@@ -140,7 +132,6 @@ class AttentionQA(Model):
         :param answer_mask: Mask for the As [batch_size, num_answers, seq_length]
         :param metadata: Ignore, this is about which dataset item we're on
         :param label: Optional, which item is valid
-        :return: shit
         """
         # Trim off boxes that are too long. this is an issue b/c dataparallel, it'll pad more zeros that are
         # not needed
@@ -197,18 +188,119 @@ class AttentionQA(Model):
                                                          (attended_q, self.pool_question)] if to_pool], -1)
 
         pooled_rep = replace_masked_values(things_to_pool,answer_mask[...,None], -1e7).max(2)[0]
-        logits = self.final_mlp(pooled_rep).squeeze(2)
+        output_dict = {
+            'pooled_rep': pooled_rep,
+            'cnn_regularization_loss': obj_reps['cnn_regularization_loss'],
+            # Uncomment to visualize attention, if you want
+            # 'qa_attention_weights': qa_attention_weights,
+            # 'atoo_attention_weights': atoo_attention_weights,
+        }
+        return output_dict
 
-        ###########################################
 
+@Model.register("MultiHopAttentionQA")
+class AttentionQA(Model):
+    def __init__(self,
+                 span_encoder: Seq2SeqEncoder,
+                 reasoning_encoder: Seq2SeqEncoder,
+                 input_dropout: float = 0.3,
+                 hidden_dim_maxpool: int = 1024,
+                 class_embs: bool=True,
+                 reasoning_use_obj: bool=True,
+                 reasoning_use_answer: bool=True,
+                 reasoning_use_question: bool=True,
+                 pool_reasoning: bool = True,
+                 pool_answer: bool = True,
+                 pool_question: bool = False,
+                 initializer: InitializerApplicator = InitializerApplicator(),
+                 ):
+        # VCR dataset becomes unpicklable due to VCR.vocab, but we don't need
+        # to pass in vocab from the dataset anyway as the BERT embeddings are
+        # pretrained and stored in h5 files per dataset instance. Just pass
+        # a dummy vocab instance for init.
+        vocab = Vocabulary()
+        super(AttentionQA, self).__init__(vocab)
+
+        self.trunk = AttentionQATrunk(
+            span_encoder,
+            reasoning_encoder,
+            input_dropout,
+            hidden_dim_maxpool,
+            class_embs,
+            reasoning_use_obj,
+            reasoning_use_answer,
+            reasoning_use_question,
+            pool_reasoning,
+            pool_answer,
+            pool_question,
+            initializer,
+        )
+
+        self.final_mlp = torch.nn.Sequential(
+            torch.nn.Dropout(input_dropout, inplace=False),
+            torch.nn.Linear(self.trunk.output_dim, hidden_dim_maxpool),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Dropout(input_dropout, inplace=False),
+            torch.nn.Linear(hidden_dim_maxpool, 1),
+        )
+        self._accuracy = CategoricalAccuracy()
+        self._loss = torch.nn.CrossEntropyLoss()
+        initializer(self)
+
+    def forward(self,
+                images: torch.Tensor,
+                objects: torch.LongTensor,
+                segms: torch.Tensor,
+                boxes: torch.Tensor,
+                box_mask: torch.LongTensor,
+                question: Dict[str, torch.Tensor],
+                question_tags: torch.LongTensor,
+                question_mask: torch.LongTensor,
+                answers: Dict[str, torch.Tensor],
+                answer_tags: torch.LongTensor,
+                answer_mask: torch.LongTensor,
+                metadata: List[Dict[str, Any]] = None,
+                label: torch.LongTensor = None) -> Dict[str, torch.Tensor]:
+        """
+        :param images: [batch_size, 3, im_height, im_width]
+        :param objects: [batch_size, max_num_objects] Padded objects
+        :param boxes:  [batch_size, max_num_objects, 4] Padded boxes
+        :param box_mask: [batch_size, max_num_objects] Mask for whether or not each box is OK
+        :param question: AllenNLP representation of the question. [batch_size, num_answers, seq_length]
+        :param question_tags: A detection label for each item in the Q [batch_size, num_answers, seq_length]
+        :param question_mask: Mask for the Q [batch_size, num_answers, seq_length]
+        :param answers: AllenNLP representation of the answer. [batch_size, num_answers, seq_length]
+        :param answer_tags: A detection label for each item in the A [batch_size, num_answers, seq_length]
+        :param answer_mask: Mask for the As [batch_size, num_answers, seq_length]
+        :param metadata: Ignore, this is about which dataset item we're on
+        :param label: Optional, which item is valid
+        """
+        features = self.trunk.forward(
+            images,
+            objects,
+            segms,
+            boxes,
+            box_mask,
+            question,
+            question_tags,
+            question_mask,
+            answers,
+            answer_tags,
+            answer_mask,
+        )
+
+        logits = self.final_mlp(features['pooled_rep']).squeeze(2)
         class_probabilities = F.softmax(logits, dim=-1)
 
-        output_dict = {"label_logits": logits, "label_probs": class_probabilities,
-                       'cnn_regularization_loss': obj_reps['cnn_regularization_loss'],
-                       # Uncomment to visualize attention, if you want
-                       # 'qa_attention_weights': qa_attention_weights,
-                       # 'atoo_attention_weights': atoo_attention_weights,
-                       }
+        output_dict = {
+            'label_logits': logits,
+            'label_probs': class_probabilities,
+            'cnn_regularization_loss': features['cnn_regularization_loss'],
+            # Uncomment to visualize attention, if you want
+            # 'qa_attention_weights': features['qa_attention_weights'],
+            # 'atoo_attention_weights': features['atoo_attention_weights'],
+        }
+
         if label is not None:
             loss = self._loss(logits, label.long().view(-1))
             self._accuracy(logits, label)

@@ -149,7 +149,7 @@ def main():
         mode=args.mode,
         embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
         only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True),
-        use_omcs=params['dataset_reader'].get('use_omcs', True),
+        use_omcs=params['dataset_reader'].get('use_omcs', False),
     )
     NUM_GPUS = torch.cuda.device_count()
     NUM_CPUS = mp.cpu_count()
@@ -183,7 +183,7 @@ def main():
     print("Loading {} for {}".format(params['model'].get('type', 'WTF?'), args.mode), flush=True)
 
     model = Model.from_params(params=params['model'])
-    for submodule in model.detector.backbone.modules():
+    for submodule in model.trunk.detector.backbone.modules():
         if isinstance(submodule, BatchNorm2d):
             submodule.track_running_stats = False
         for p in submodule.parameters():

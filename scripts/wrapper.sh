@@ -40,6 +40,7 @@ echo "Rank: $RANK"
 echo "GPUs: $CUDA_VISIBLE_DEVICES"
 echo "Checkpoint dir: $CHECKPOINT_DIR"
 
+export PYTHONPATH="$PYTHONPATH":"$BASEDIR"
 export PYTHONUNBUFFERED=True
 
 python $SOURCE --params $PARAMS --folder $CHECKPOINT_DIR --mode $MODE --no_tqdm
