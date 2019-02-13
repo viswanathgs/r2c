@@ -1,5 +1,6 @@
 from models import *
 from models.multiatt import model
+from models.multiatt import model_multitask
 
 # You can add more models in this folder. like
 # from models.no_question import model

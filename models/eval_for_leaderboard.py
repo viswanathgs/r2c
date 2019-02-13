@@ -13,7 +13,7 @@ from allennlp.nn.util import device_mapping
 from torch.nn import DataParallel
 from torch.nn.modules import BatchNorm2d
 
-from dataloaders.vcr import VCR, VCRLoader
+from dataloaders.vcr import VCR, VCRLoader, vcr_eval_splits
 from utils.pytorch_misc import time_batch
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s', level=logging.DEBUG)
@@ -21,6 +21,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s
 # This is needed to make the imports work
 from allennlp.models import Model
 import models
+from models.utils import load_params
 
 #################################
 #################################
@@ -80,7 +81,7 @@ num_workers = (4 * NUM_GPUS if NUM_CPUS == 32 else 2 * NUM_GPUS) - 1
 print(f"Using {num_workers} workers out of {NUM_CPUS} possible", flush=True)
 loader_params = {'batch_size': 96 // NUM_GPUS, 'num_gpus': NUM_GPUS, 'num_workers': num_workers}
 
-vcr_modes = VCR.eval_splits(embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
+vcr_modes = vcr_eval_splits(embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
                             only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True))
 probs_grp = []
 ids_grp = []

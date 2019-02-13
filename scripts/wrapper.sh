@@ -1,6 +1,8 @@
 #!/bin/bash
 
 # Usage: ./wrapper.sh <MODE> <PARAM_FILE> <BASE_DIR_TO_R2C_SOURCE> <CHECKPOINT_DIR>
+# MODE can be [answer, rationale, joint, multitask]
+# PARAM_FILE can be [default, omcs, multitask, multitask_omcs]
 
 . /usr/share/modules/init/sh
 
@@ -18,7 +20,11 @@ source activate /private/home/"$USER"/.conda/envs/vcr
 MODE=${1:-"answer"}
 PARAM_FILE=${2:-"default"}
 BASEDIR=${3:-"/private/home/$USER/projects/r2c"}
-CHECKPOINT_DIR=${4:-"/checkpoint/$USER/r2c/$SLURM_JOB_ID"}
+if [ -z "$SLURM_JOB_ID" ]; then
+  CHECKPOINT_DIR=${4:-"/tmp/r2c"}
+else
+  CHECKPOINT_DIR=${4:-"/checkpoint/$USER/r2c/$SLURM_JOB_ID"}
+fi
 
 SOURCE="$BASEDIR"/models/train.py
 PARAMS="$BASEDIR"/models/multiatt/"$PARAM_FILE".json

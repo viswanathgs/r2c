@@ -195,11 +195,6 @@ class VCR(Dataset):
     def is_train(self):
         return self.split == 'train'
 
-    def get_h5_group(self, ind):
-        if self.h5 is None:
-            self.h5 = h5py.File(self.h5fn, 'r')
-        return self.h5[str(ind)]
-
     @classmethod
     def splits(cls, **kwargs):
         """ Helper method to generate splits of the dataset"""
@@ -283,7 +278,6 @@ class VCR(Dataset):
 
         ###################################################################
         # Load in BERT. We'll get contextual representations of the context and the answer choices
-        # grp_items = {k: np.array(v, dtype=np.float16) for k, v in self.get_h5_group(index).items()}
         with h5py.File(self.h5fn, 'r') as h5:
             grp_items = {k: np.array(v, dtype=np.float16) for k,v in h5[str(index)].items()}
 
@@ -389,6 +383,96 @@ class VCR(Dataset):
         # instance.index_fields(self.vocab)
         return image, instance
 
+
+class MultiTaskVCR(Dataset):
+    '''
+    Wrapper around VCR to load data for both Q->A and QA->R tasks for
+    multi-task learning.
+    '''
+
+    def __init__(self, split, mode, only_use_relevant_dets=True,
+            add_image_as_a_box=True, embs_to_load='bert_da',
+            conditioned_answer_choice=None,
+            all_answers_for_rationale=False,
+            use_omcs=False):
+        assert mode == 'multitask'
+
+        self.answer_ds = VCR(
+            split=split,
+            mode='answer',
+            only_use_relevant_dets=only_use_relevant_dets,
+            add_image_as_a_box=add_image_as_a_box,
+            embs_to_load=embs_to_load,
+            conditioned_answer_choice=conditioned_answer_choice,
+            all_answers_for_rationale=all_answers_for_rationale,
+            use_omcs=use_omcs,
+        )
+        self.rationale_ds = VCR(
+            split=split,
+            mode='rationale',
+            only_use_relevant_dets=only_use_relevant_dets,
+            add_image_as_a_box=add_image_as_a_box,
+            embs_to_load=embs_to_load,
+            conditioned_answer_choice=conditioned_answer_choice,
+            all_answers_for_rationale=all_answers_for_rationale,
+            use_omcs=use_omcs,
+        )
+
+        assert len(self.answer_ds) == len(self.rationale_ds)
+
+    def set_answer_labels(self, answer_labels):
+        self.rationale_ds.set_answer_labels(answer_labels)
+
+    @property
+    def is_train(self):
+        return self.answer_ds.split == 'train'
+
+    @classmethod
+    def splits(cls, **kwargs):
+        """ Helper method to generate splits of the dataset"""
+        kwargs_copy = {x:y for x,y in kwargs.items()}
+        train = cls(split='train', **kwargs_copy)
+        val = cls(split='val', **kwargs_copy)
+        test = cls(split='test', **kwargs_copy)
+        return train, val, test
+
+    @classmethod
+    def eval_splits(cls, **kwargs):
+        """ Helper method to generate splits of the dataset. Use this for testing, because it will
+            condition on everything."""
+        for forbidden_key in ['mode', 'split', 'conditioned_answer_choice']:
+            if forbidden_key in kwargs:
+                raise ValueError(f"don't supply {forbidden_key} to eval_splits()")
+
+        stuff_to_return = [cls(split='test', mode='multitask', **kwargs)] + [
+            cls(split='test', mode='multitask', conditioned_answer_choice=i, **kwargs) for i in range(4)]
+        return tuple(stuff_to_return)
+
+    def __len__(self):
+        return len(self.answer_ds)
+
+    def __getitem__(self, index):
+        '''
+        Fetch corresponding instances for Q->A and Q->AR and merge them into a
+        single training instance.
+        '''
+        image, instance = self.answer_ds[index]
+        _, rationale_instance = self.rationale_ds[index]
+        assert instance['metadata'].metadata == rationale_instance['metadata'].metadata
+
+        instance.add_field('qa', rationale_instance['question'])
+        instance.add_field('qa_tags', rationale_instance['question_tags'])
+        instance.add_field('rationales', rationale_instance['answers'])
+        instance.add_field('rationale_tags', rationale_instance['answer_tags'])
+        instance.add_field('rationale_segms', rationale_instance['segms'])
+        instance.add_field('rationale_objects', rationale_instance['objects'])
+        instance.add_field('rationale_boxes', rationale_instance['boxes'])
+        if 'label' in rationale_instance:
+            instance.add_field('rationale_label', rationale_instance['label'])
+
+        return image, instance
+
+
 def collate_fn(data, to_gpu=False):
     """Creates mini-batch tensors
     """
@@ -406,6 +490,16 @@ def collate_fn(data, to_gpu=False):
     td['box_mask'] = torch.all(td['boxes'] >= 0, -1).long()
     td['images'] = images
 
+    # TODO (viswanath): Single batch for trunk?
+    if 'qa' in td:
+        td['qa_mask'] = get_text_field_mask(td['qa'], num_wrapping_dims=1)
+        td['qa_tags'][td['qa_mask'] == 0] = -2  # Padding
+    if 'rationales' in td:
+        td['rationale_mask'] = get_text_field_mask(td['rationales'], num_wrapping_dims=1)
+        td['rationale_tags'][td['rationale_mask'] == 0] = -2
+    if 'rationale_boxes' in td:
+        td['rationale_box_mask'] = torch.all(td['rationale_boxes'] >= 0, -1).long()
+
     if to_gpu:
         for k in td:
             if k != 'metadata':
@@ -419,6 +513,20 @@ def collate_fn(data, to_gpu=False):
     #         td.pop(k)
 
     return td
+
+
+def vcr_splits(**kwargs):
+    if 'mode' in kwargs and kwargs['mode'] == 'multitask':
+        return MultiTaskVCR.splits(**kwargs)
+    else:
+        return VCR.splits(**kwargs)
+
+
+def vcr_eval_splits(**kwargs):
+    if 'mode' in kwargs and kwargs['mode'] == 'multitask':
+        return MultiTaskVCR.eval_splits(**kwargs)
+    else:
+        return VCR.eval_splits(**kwargs)
 
 
 class VCRLoader(torch.utils.data.DataLoader):

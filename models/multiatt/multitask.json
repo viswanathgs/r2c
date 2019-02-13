@@ -1,13 +1,12 @@
 {
   "dataset_reader": {
-    "type": "vswag",
-    "use_omcs": true
+    "type": "vswag"
   },
   "model": {
-    "type": "MultiHopAttentionQA",
+    "type": "MultiTaskMultiHopAttentionQA",
     "span_encoder": {
       "type": "lstm",
-      "input_size": 2048,
+      "input_size": 1280,
       "hidden_size": 256,
       "num_layers": 1,
       "bidirectional": true
