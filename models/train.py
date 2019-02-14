@@ -26,7 +26,7 @@ import torch.utils.data.distributed
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
-from dataloaders.vcr import VCR, VCRLoader
+from dataloaders.vcr import VCR, VCRLoader, vcr_splits
 from utils.pytorch_misc import time_batch, save_checkpoint, clip_grad_norm, \
     restore_checkpoint, print_para, restore_best_checkpoint
 
@@ -53,7 +53,7 @@ parser.add_argument(
 parser.add_argument(
     '--mode',
     type=str,
-    choices=['answer', 'rationale', 'joint'],
+    choices=['answer', 'rationale', 'joint', 'multitask'],
     default='answer',
 )
 parser.add_argument(
@@ -145,11 +145,14 @@ def main():
             world_size=WORLD_SIZE)
 
     params = Params.from_file(args.params)
-    train, val, test = VCR.splits(
+    if 'MultiTask' in params['model']['type']:
+        args.mode = 'multitask'
+
+    train, val, test = vcr_splits(
         mode=args.mode,
         embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
         only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True),
-        use_omcs=params['dataset_reader'].get('use_omcs', True),
+        use_omcs=params['dataset_reader'].get('use_omcs', False),
     )
     NUM_GPUS = torch.cuda.device_count()
     NUM_CPUS = mp.cpu_count()
@@ -183,7 +186,7 @@ def main():
     print("Loading {} for {}".format(params['model'].get('type', 'WTF?'), args.mode), flush=True)
 
     model = Model.from_params(params=params['model'])
-    for submodule in model.detector.backbone.modules():
+    for submodule in model.trunk.detector.backbone.modules():
         if isinstance(submodule, BatchNorm2d):
             submodule.track_running_stats = False
         for p in submodule.parameters():
@@ -238,14 +241,18 @@ def main():
             )
             optimizer.step()
 
-            train_results.append(pd.Series({'loss': output_dict['loss'].mean().item(),
-                                            'crl': output_dict['cnn_regularization_loss'].mean().item(),
-                                            'accuracy': (model.module if NUM_GPUS > 1 else model).get_metrics(
-                                                reset=(b % ARGS_RESET_EVERY) == 0)[
-                                                'accuracy'],
-                                            'sec_per_batch': time_per_batch,
-                                            'hr_per_epoch': len(train_loader) * time_per_batch / 3600,
-                                            }))
+            train_result = {
+                'loss': output_dict['loss'].mean().item(),
+                'crl': output_dict['cnn_regularization_loss'].mean().item(),
+                'sec_per_batch': time_per_batch,
+                'hr_per_epoch': len(train_loader) * time_per_batch / 3600,
+            }
+            train_result.update(
+                (model.module if NUM_GPUS > 1 else model).get_metrics(
+                    reset=(b % ARGS_RESET_EVERY) == 0,
+                ),
+            )
+            train_results.append(pd.Series(train_result))
             if b % ARGS_RESET_EVERY == 0 and b > 0:
                 norms_df = pd.DataFrame(pd.DataFrame(norms[-ARGS_RESET_EVERY:]).mean(), columns=['norm']).join(
                     param_shapes[['shape', 'size']]).sort_values('norm', ascending=False)

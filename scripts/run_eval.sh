@@ -61,6 +61,7 @@ PARAMS="$BASEDIR"/models/multiatt/"$PARAM_FILE".json
 
 echo "Running job $SLURM_JOB_ID on $SLURMD_NODENAME"
 
+export PYTHONPATH="$PYTHONPATH":"$BASEDIR"
 export PYTHONUNBUFFERED=True
 
 srun --label python $SOURCE \

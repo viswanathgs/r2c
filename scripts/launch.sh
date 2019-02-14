@@ -6,12 +6,12 @@
 #SBATCH --job-name=r2c
 #SBATCH --output=/checkpoint/%u/logs/r2c-%j.out
 #SBATCH --error=/checkpoint/%u/logs/r2c-%j.err
-#SBATCH --partition=uninterrupted
+#SBATCH --partition=dev
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=40
-#SBATCH --mem=200G
+#SBATCH --mem=400G
 #SBATCH --time=24:00:00
 #SBATCH --signal=USR1@600
 #SBATCH --open-mode=append
