@@ -6,7 +6,7 @@ import torch.nn.parallel
 from allennlp.data.vocabulary import Vocabulary
 from allennlp.models.model import Model
 from allennlp.modules import TextFieldEmbedder, Seq2SeqEncoder, FeedForward, InputVariationalDropout, TimeDistributed
-from allennlp.training.metrics import CategoricalAccuracy
+from allennlp.training.metrics import CategoricalAccuracy, BooleanAccuracy
 from allennlp.modules.matrix_attention import BilinearMatrixAttention
 from utils.detector import SimpleDetector
 from allennlp.nn.util import masked_softmax, weighted_sum, replace_masked_values
@@ -70,6 +70,7 @@ class MultiTaskAttentionQA(Model):
         )
         self._answer_accuracy = CategoricalAccuracy()
         self._rationale_accuracy = CategoricalAccuracy()
+        self._multitask_accuracy = BooleanAccuracy()
         self._loss = torch.nn.CrossEntropyLoss()
         initializer(self)
 
@@ -154,12 +155,21 @@ class MultiTaskAttentionQA(Model):
             loss = self._loss(rationale_logits, rationale_label.long().view(-1))
             rationale_loss = loss[None]
 
+        # Track multi-task/joint accuracy for Q->A and QA->R
+        if label is not None and rationale_label is not None:
+            answer_pred = answer_probs.argmax(dim=1)
+            rationale_pred = rationale_probs.argmax(dim=1)
+            self._multitask_accuracy(
+                torch.stack((answer_pred, rationale_pred), dim=1),
+                torch.stack((label, rationale_label), dim=1),
+            )
+
         output_dict['loss'] = answer_loss + rationale_loss
         return output_dict
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         return {
-            'accuracy': 0, # TODO (viswanath): Joint accuracy
+            'accuracy': self._multitask_accuracy.get_metric(reset),
             'answer_accuracy': self._answer_accuracy.get_metric(reset),
             'rationale_accuracy': self._rationale_accuracy.get_metric(reset),
         }
