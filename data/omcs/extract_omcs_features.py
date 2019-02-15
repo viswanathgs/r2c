@@ -88,14 +88,19 @@ def load_omcs_embeddings(h5_filename, dtype=np.float16):
     Helper to load OMCS embeddings and the corresponding text.
     '''
     omcs_text = []
-    omcs_embeddings = []
+    omcs_sentence_embs = []
+    omcs_word_embs = []
     with h5py.File(h5_filename, 'r') as h5:
         for i in range(len(h5)):
             metadata = json.loads(h5[f'{i}/metadata'][()])
-            embedding = np.array(h5[f'{i}']['embedding'], dtype=dtype)
-            omcs_embeddings.append(embedding)
+            sentence_embedding = np.array(h5[f'{i}']['sentence_embedding'], dtype=dtype)
+            word_embeddings = np.array(h5[f'{i}']['word_embeddings'], dtype=dtype)
+            assert sentence_embedding.shape[0] == 1
+            assert sentence_embedding.shape[1] == word_embeddings.shape[1]
+            omcs_sentence_embs.append(sentence_embedding)
+            omcs_word_embs.append(word_embeddings)
             omcs_text.append(metadata['text'])
-    return omcs_text, omcs_embeddings
+    return omcs_text, omcs_sentence_embs, omcs_word_embs
 
 
 if __name__ == '__main__':
@@ -150,13 +155,25 @@ if __name__ == '__main__':
         tf.logging.info("Handling chunk {}/{}".format(chunk_id + 1, num_chunks))
         input_fn = input_fn_builder(features, FLAGS.max_seq_length)
         for result in tqdm(estimator.predict(input_fn, yield_single_examples=True)):
+            ind = unique_id_to_ind[int(result["unique_id"])]
+
             # Just one layer for now
             layer = result['layer_output_0']
 
-            ind = unique_id_to_ind[int(result["unique_id"])]
-            _, alignment = examples[ind]
-            embedding = alignment_gather([-1] + alignment, layer)
-            output_h5[f'{ind}'].create_dataset('embedding', data=embedding)
+            # Sentence embedding from [CLS]
+            sentence_embedding = layer[0].astype(np.float16).reshape(1, -1)
+            output_h5[f'{ind}'].create_dataset(
+                'sentence_embedding',
+                data=sentence_embedding,
+            )
+
+            # Word-in-context embeddings
+            _, word_alignment = examples[ind]
+            word_embeddings = alignment_gather([-1] + word_alignment, layer)
+            output_h5[f'{ind}'].create_dataset(
+                'word_embeddings',
+                data=word_embeddings,
+            )
 
             metadata = json.dumps({
                 'text': omcs.iloc[ind]['text'],

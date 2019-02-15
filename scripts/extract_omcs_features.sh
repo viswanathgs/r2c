@@ -15,22 +15,23 @@ module load anaconda3/5.0.1
 source activate /private/home/"$USER"/.conda/envs/vcr
 
 BASEDIR=${1:-"/private/home/$USER/projects/r2c"}
-DATADIR=${2:-"/private/home/viswanath/datasets/vcr1/data"}
+DATADIR=${2:-"/private/home/viswanath/datasets/vcr1/data/omcs"}
 
 export PYTHONPATH="$PYTHONPATH":"$BASEDIR"
 export PYTHONUNBUFFERED=True
 
 cd "$BASEDIR"/data/omcs
 
-for vcr_bertfile in $DATADIR/*.h5; do
-  echo "Scheduling job for $vcr_bertfile"
+OUTFILE="$DATADIR"/bert_da_omcs.h5
 
-  srun \
-    --nodes=1 --ntasks-per-node=1 \
-    --gres=gpu:8 --mem=200G --cpus-per-task=40 \
-    --time=8:00:00 \
-    --partition=dev \
-    --output=/checkpoint/%u/logs/omcs-%j.out \
-    --error=/checkpoint/%u/logs/omcs-%j.err \
-    python enrich_vcr_with_omcs.py --vcr_h5 $vcr_bertfile &
-done
+echo "Output OMCS embedding file: $OUTFILE"
+
+# Uncomment to run on cluster
+# srun \
+#   --nodes=1 --ntasks-per-node=1 \
+#   --gres=gpu:1 --mem=200G \
+#   --time=2:00:00 \
+#   --partition=dev \
+#   --output=/checkpoint/%u/logs/omcs-%j.out \
+#   --error=/checkpoint/%u/logs/omcs-%j.err \
+  python extract_omcs_features.py --output_h5 $OUTFILE

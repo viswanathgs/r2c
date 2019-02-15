@@ -72,19 +72,19 @@ def build_index(embeddings):
 
 def load_omcs(args):
     # Embeddings are stored as float16, but faiss requires float32
-    text, embs = load_omcs_embeddings(args.omcs_h5, dtype=np.float32)
-    embs = np.vstack(embs)
+    text, _, word_embs = load_omcs_embeddings(args.omcs_h5, dtype=np.float32)
+    word_embs = np.vstack(word_embs)
 
     if args.omcs_index is not None and os.path.exists(args.omcs_index):
         index = faiss.read_index(args.omcs_index)
     else:
-        index = build_index(embs)
+        index = build_index(word_embs)
         if args.omcs_index is not None:
             faiss.write_index(index, args.omcs_index)
 
-    assert len(embs) == index.ntotal
-    assert embs.shape[1] == index.d
-    return embs, index
+    assert len(word_embs) == index.ntotal
+    assert word_embs.shape[1] == index.d
+    return word_embs, index
 
 
 def get_omcs_embeddings_for_vcr(omcs_embs, omcs_index, vcr_embs, args):
