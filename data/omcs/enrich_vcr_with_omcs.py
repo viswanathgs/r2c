@@ -16,7 +16,8 @@ import time
 
 from allennlp.nn.util import masked_softmax
 from config import VCR_ANNOTS_DIR
-from data.omcs.extract_omcs_features import load_omcs_embeddings
+from data.omcs.extract_omcs_features import load_omcs_embeddings, build_index, \
+        normalize_embedding
 
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger(__name__)
@@ -52,35 +53,15 @@ def parse_args():
     return parser.parse_args()
 
 
-def normalize(emb):
-    norm = np.linalg.norm(emb, axis=-1)
-    return emb / norm[:, np.newaxis]
-
-
-def build_index(embeddings):
-    # IndexFlat is sufficient for now
-    d = embeddings.shape[1]
-    index = faiss.IndexFlatIP(d)
-
-    # Faiss inner product doesn't normalize. Let's normalize here
-    # to match torch.nn.CosineSimilarity.
-    # We could also use L2 here now since L2^2 = 2 - 2 * IP
-    embs = normalize(embeddings)
-    index.add(embs)
-    return index
-
-
 def load_omcs(args):
     # Embeddings are stored as float16, but faiss requires float32
-    text, _, word_embs = load_omcs_embeddings(args.omcs_h5, dtype=np.float32)
+    _, _, word_embs = load_omcs_embeddings(args.omcs_h5, dtype=np.float32)
     word_embs = np.vstack(word_embs)
 
     if args.omcs_index is not None and os.path.exists(args.omcs_index):
         index = faiss.read_index(args.omcs_index)
     else:
-        index = build_index(word_embs)
-        if args.omcs_index is not None:
-            faiss.write_index(index, args.omcs_index)
+        index = build_index(word_embs, args.omcs_index)
 
     assert len(word_embs) == index.ntotal
     assert word_embs.shape[1] == index.d
@@ -90,7 +71,7 @@ def load_omcs(args):
 def get_omcs_embeddings_for_vcr(omcs_embs, omcs_index, vcr_embs, args):
     # vcr_embs: (n, d), omcs_embs: (N, d)
     # Index lookup. Normalize for cosine similarity.
-    vcr_embs = normalize(vcr_embs)
+    vcr_embs = normalize_embedding(vcr_embs)
     # D, I: (n, k)
     D, I = omcs_index.search(vcr_embs, k=args.k)
 

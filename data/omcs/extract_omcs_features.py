@@ -12,6 +12,7 @@ import math
 import numpy as np
 import pandas as pd
 import json
+import faiss
 
 from data.get_bert_embeddings import modeling
 from data.get_bert_embeddings import tokenization
@@ -32,11 +33,17 @@ flags.DEFINE_integer(
 flags.DEFINE_string(
     "output_h5", "bert_da_omcs.h5",
     "Output h5 filename for OMCS BERT embeddings.")
+flags.DEFINE_string(
+    "sentence_index", "bert_da_omcs_sentences.faissindex",
+    "Output filename for FAISS index for OMCS sentence embeddings.")
+flags.DEFINE_string(
+    "word_index", "bert_da_omcs_words.faissindex",
+    "Output filename for FAISS index for OMCS word-in-context embeddings.")
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
 
-def load_omcs():
+def load_omcs_sentences():
     omcs_free = pd.read_csv(
         os.path.join(VCR_ANNOTS_DIR, 'omcs/omcs-sentences-free.txt'),
         sep='\t', header=0,
@@ -103,6 +110,31 @@ def load_omcs_embeddings(h5_filename, dtype=np.float16):
     return omcs_text, omcs_sentence_embs, omcs_word_embs
 
 
+def normalize_embedding(emb):
+    norm = np.linalg.norm(emb, axis=-1)
+    return emb / norm[:, np.newaxis]
+
+
+def build_index(embeddings, outfile=None):
+    # IndexFlat is sufficient for now
+    d = embeddings.shape[1]
+    index = faiss.IndexFlatIP(d)
+
+    # Faiss inner product doesn't normalize. Let's normalize here
+    # to match torch.nn.CosineSimilarity.
+    # We could also use L2 here now since L2^2 = 2 - 2 * IP
+    embs = normalize_embedding(embeddings)
+    index.add(embs)
+
+    assert embeddings.shape[0] == index.ntotal
+    assert embeddings.shape[1] == index.d
+
+    if outfile is not None:
+        faiss.write_index(index, outfile)
+
+    return index
+
+
 if __name__ == '__main__':
     layer_indexes = [int(x) for x in FLAGS.layers.split(",")]
 
@@ -110,7 +142,7 @@ if __name__ == '__main__':
     tokenizer = tokenization.FullTokenizer(
         vocab_file=vocab_file, do_lower_case=FLAGS.do_lower_case)
 
-    omcs = load_omcs()
+    omcs = load_omcs_sentences()
     examples = list(omcs_iter(omcs, tokenizer, FLAGS.max_seq_length))
     tf.logging.info('Obtained {} examples'.format(len(examples)))
 
@@ -179,3 +211,20 @@ if __name__ == '__main__':
                 'text': omcs.iloc[ind]['text'],
             })
             output_h5[f'{ind}'].create_dataset('metadata', data=metadata)
+
+    tf.logging.info('OMCS embeddings written to {}'.format(FLAGS.output_h5))
+
+    # Now build FAISS indexes for sentence and word embeddings.
+    # Note that the embeddings are normalized before adding to the index
+    # so that the returned distances are cosine similarity.
+    # Embeddings are stored as float16, but faiss requires float32.
+    _, sentence_embs, word_embs = load_omcs_embeddings(
+        FLAGS.output_h5,
+        dtype=np.float32,
+    )
+
+    sentence_index = build_index(np.vstack(sentence_embs), FLAGS.sentence_index)
+    tf.logging.info('Index for sentence embeddings at {}'.format(FLAGS.sentence_index))
+
+    word_index = build_index(np.vstack(word_embs), FLAGS.word_index)
+    tf.logging.info('Index for word embeddings at {}'.format(FLAGS.word_index))

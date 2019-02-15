@@ -23,8 +23,10 @@ export PYTHONUNBUFFERED=True
 cd "$BASEDIR"/data/omcs
 
 OUTFILE="$DATADIR"/bert_da_omcs.h5
+SENTENCE_INDEX="$DATADIR"/bert_da_omcs_sentences.faissindex
+WORD_INDEX="$DATADIR"/bert_da_omcs_words.faissindex
 
-echo "Output OMCS embedding file: $OUTFILE"
+echo "Output OMCS embedding file: $OUTFILE, sentence index: $SENTENCE_INDEX, word index: $WORD_INDEX"
 
 # Uncomment to run on cluster
 # srun \
@@ -34,4 +36,4 @@ echo "Output OMCS embedding file: $OUTFILE"
 #   --partition=dev \
 #   --output=/checkpoint/%u/logs/omcs-%j.out \
 #   --error=/checkpoint/%u/logs/omcs-%j.err \
-  python extract_omcs_features.py --output_h5 $OUTFILE
+  python extract_omcs_features.py --output_h5 $OUTFILE --sentence_index $SENTENCE_INDEX --word_index $WORD_INDEX
