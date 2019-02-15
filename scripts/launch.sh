@@ -12,7 +12,7 @@
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=40
 #SBATCH --mem=400G
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --signal=USR1@600
 #SBATCH --open-mode=append
 
