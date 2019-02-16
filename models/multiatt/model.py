@@ -183,11 +183,14 @@ class AttentionQATrunk(Model):
 
         D = torch.empty((n, self.k), dtype=torch.float32, device=device)
         I = torch.empty((n, self.k), dtype=torch.int64, device=device)
-        embs_ptr = swig_ptr_from_FloatTensor(projected_embs),
-        D_ptr = swig_ptr_from_FloatTensor(D)
-        I_ptr = swig_ptr_from_LongTensor(I)
         torch.cuda.synchronize()
-        self.omcs_index.at(device).search_c(n, embs_ptr, self.k, D_ptr, I_ptr)
+        self.omcs_index.at(device).search_c(
+            n,
+            swig_ptr_from_FloatTensor(projected_embs),
+            self.k,
+            swig_ptr_from_FloatTensor(D),
+            swig_ptr_from_LongTensor(I),
+        )
         torch.cuda.synchronize()
 
         # Compute softmax of similarity scores.
