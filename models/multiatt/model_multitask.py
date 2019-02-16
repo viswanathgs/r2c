@@ -31,6 +31,7 @@ class MultiTaskAttentionQA(Model):
                  pool_answer: bool = True,
                  pool_question: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
+                 learned_omcs: dict = {},
                  ):
         # VCR dataset becomes unpicklable due to VCR.vocab, but we don't need
         # to pass in vocab from the dataset anyway as the BERT embeddings are
@@ -52,6 +53,7 @@ class MultiTaskAttentionQA(Model):
             pool_answer,
             pool_question,
             initializer,
+            learned_omcs,
         )
 
         self.answer_mlp = torch.nn.Sequential(

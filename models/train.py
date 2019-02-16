@@ -7,6 +7,9 @@ import shutil
 import signal
 import time
 
+# Faiss needs to be imported before torch to avoid MKL related .so issues
+import faiss
+
 # Setting for distributed training.
 import torch.multiprocessing as mp
 if __name__ == '__main__':
@@ -152,7 +155,7 @@ def main():
         mode=args.mode,
         embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
         only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True),
-        use_omcs=params['dataset_reader'].get('use_omcs', False),
+        use_precomputed_omcs=params['dataset_reader'].get('use_precomputed_omcs', False),
     )
     NUM_GPUS = torch.cuda.device_count()
     NUM_CPUS = mp.cpu_count()

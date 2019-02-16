@@ -100,7 +100,7 @@ class VCR(Dataset):
             add_image_as_a_box=True, embs_to_load='bert_da',
             conditioned_answer_choice=None,
             all_answers_for_rationale=False,
-            use_omcs=False):
+            use_precomputed_omcs=False):
         """
 
         :param split: train, val, or test
@@ -166,7 +166,7 @@ class VCR(Dataset):
         self.h5 = None
 
         self.h5fn_omcs = None
-        if use_omcs:
+        if use_precomputed_omcs:
             self.h5fn_omcs = os.path.join(VCR_ANNOTS_DIR, 'omcs',
                 os.path.basename(self.h5fn).split('.')[0] + '_omcs.h5')
             print("Loading OMCS embeddings from {}".format(self.h5fn_omcs))
@@ -394,7 +394,7 @@ class MultiTaskVCR(Dataset):
             add_image_as_a_box=True, embs_to_load='bert_da',
             conditioned_answer_choice=None,
             all_answers_for_rationale=False,
-            use_omcs=False):
+            use_precomputed_omcs=False):
         assert mode == 'multitask'
 
         self.answer_ds = VCR(
@@ -405,7 +405,7 @@ class MultiTaskVCR(Dataset):
             embs_to_load=embs_to_load,
             conditioned_answer_choice=conditioned_answer_choice,
             all_answers_for_rationale=all_answers_for_rationale,
-            use_omcs=use_omcs,
+            use_precomputed_omcs=use_precomputed_omcs,
         )
         self.rationale_ds = VCR(
             split=split,
@@ -415,7 +415,7 @@ class MultiTaskVCR(Dataset):
             embs_to_load=embs_to_load,
             conditioned_answer_choice=conditioned_answer_choice,
             all_answers_for_rationale=all_answers_for_rationale,
-            use_omcs=use_omcs,
+            use_precomputed_omcs=use_precomputed_omcs,
         )
 
         assert len(self.answer_ds) == len(self.rationale_ds)
