@@ -14,6 +14,10 @@ from allennlp.nn import InitializerApplicator
 
 import models
 from models.multiatt.model import AttentionQATrunk
+import logging
+
+logging.basicConfig(level=logging.INFO)
+LOG = logging.getLogger(__name__)
 
 
 @Model.register("MultiTaskMultiHopAttentionQA")
@@ -74,7 +78,24 @@ class MultiTaskAttentionQA(Model):
         self._rationale_accuracy = CategoricalAccuracy()
         self._multitask_accuracy = BooleanAccuracy()
         self._loss = torch.nn.CrossEntropyLoss()
+
+        # If both are true, then run in multitask mode. Disable one of them
+        # using set_singletask_mode() to run in baseline answer or rationale
+        # mode. This can be used for eval purposes.
+        self.answer_mode = True
+        self.rationale_mode = True
+
         initializer(self)
+
+    def set_singletask_mode(self, mode):
+        assert mode in ['answer', 'rationale']
+        LOG.info('Enforcing single-task {} mode in MultiTask model'.format(mode))
+        if mode == 'answer':
+            self.answer_mode = True
+            self.rationale_mode = False
+        else:
+            self.answer_mode = False
+            self.rationale_mode = True
 
     def forward(self,
                 images: torch.Tensor,
@@ -102,63 +123,66 @@ class MultiTaskAttentionQA(Model):
                 label: torch.LongTensor = None,
                 rationale_label: torch.LongTensor = None,
         ) -> Dict[str, torch.Tensor]:
-        answer_features = self.trunk.forward(
-            images,
-            objects,
-            segms,
-            boxes,
-            box_mask,
-            question,
-            question_tags,
-            question_mask,
-            answers,
-            answer_tags,
-            answer_mask,
-        )
-        rationale_features = self.trunk.forward(
-            images,
-            rationale_objects,
-            rationale_segms,
-            rationale_boxes,
-            rationale_box_mask,
-            qa,
-            qa_tags,
-            qa_mask,
-            rationales,
-            rationale_tags,
-            rationale_mask,
-        )
-
-        answer_logits = self.answer_mlp(answer_features['pooled_rep']).squeeze(2)
-        answer_probs = F.softmax(answer_logits, dim=-1)
-
-        rationale_logits = self.rationale_mlp(rationale_features['pooled_rep']).squeeze(2)
-        rationale_probs = F.softmax(rationale_logits, dim=-1)
-
-        cnn_reg_loss = answer_features['cnn_regularization_loss'] + \
-                rationale_features['cnn_regularization_loss']
-        output_dict = {
-            'label_logits': answer_logits,
-            'label_probs': answer_probs,
-            'rationale_logits': rationale_logits,
-            'rationale_probs': rationale_probs,
-            'cnn_regularization_loss': cnn_reg_loss,
-        }
-
+        output_dict = {}
         answer_loss = 0.0
-        if label is not None:
-            self._answer_accuracy(answer_logits, label)
-            loss = self._loss(answer_logits, label.long().view(-1))
-            answer_loss = loss[None]
-
         rationale_loss = 0.0
-        if rationale_label is not None:
-            self._rationale_accuracy(rationale_logits, rationale_label)
-            loss = self._loss(rationale_logits, rationale_label.long().view(-1))
-            rationale_loss = loss[None]
+        cnn_reg_loss = 0.0
+
+        if self.answer_mode:
+            answer_features = self.trunk.forward(
+                images,
+                objects,
+                segms,
+                boxes,
+                box_mask,
+                question,
+                question_tags,
+                question_mask,
+                answers,
+                answer_tags,
+                answer_mask,
+            )
+            answer_logits = self.answer_mlp(answer_features['pooled_rep']).squeeze(2)
+            answer_probs = F.softmax(answer_logits, dim=-1)
+            output_dict.update({
+                'label_logits': answer_logits,
+                'label_probs': answer_probs,
+            })
+            cnn_reg_loss += answer_features['cnn_regularization_loss']
+            if label is not None:
+                self._answer_accuracy(answer_logits, label)
+                loss = self._loss(answer_logits, label.long().view(-1))
+                answer_loss = loss[None]
+
+        if self.rationale_mode:
+            rationale_features = self.trunk.forward(
+                images,
+                rationale_objects,
+                rationale_segms,
+                rationale_boxes,
+                rationale_box_mask,
+                qa,
+                qa_tags,
+                qa_mask,
+                rationales,
+                rationale_tags,
+                rationale_mask,
+            )
+            rationale_logits = self.rationale_mlp(rationale_features['pooled_rep']).squeeze(2)
+            rationale_probs = F.softmax(rationale_logits, dim=-1)
+            output_dict.update({
+                'rationale_logits': rationale_logits,
+                'rationale_probs': rationale_probs,
+            })
+            cnn_reg_loss += rationale_features['cnn_regularization_loss']
+            if rationale_label is not None:
+                self._rationale_accuracy(rationale_logits, rationale_label)
+                loss = self._loss(rationale_logits, rationale_label.long().view(-1))
+                rationale_loss = loss[None]
 
         # Track multi-task/joint accuracy for Q->A and QA->R
-        if label is not None and rationale_label is not None:
+        if self.answer_mode and self.rationale_mode and \
+                label is not None and rationale_label is not None:
             answer_pred = answer_probs.argmax(dim=1)
             rationale_pred = rationale_probs.argmax(dim=1)
             self._multitask_accuracy(
@@ -166,7 +190,10 @@ class MultiTaskAttentionQA(Model):
                 torch.stack((label, rationale_label), dim=1),
             )
 
-        output_dict['loss'] = answer_loss + rationale_loss
+        output_dict.update({
+            'loss': answer_loss + rationale_loss,
+            'cnn_regularization_loss': cnn_reg_loss,
+        })
         return output_dict
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
