@@ -116,8 +116,8 @@ def compute_baseline(model, params, args):
             num_gpus,
         )
         answer_pred = answer_probs.argmax(1)
-        answer_accuracy = float(np.mean(answer_gt == answer_pred))
-        LOG.info('Baseline Q->A accuracy: {}'.format(answer_accuracy))
+        answer_accuracy = float(np.mean(answer_gt == answer_pred)) * 100.0
+        LOG.info('Baseline Q->A accuracy: {:0.2f}'.format(answer_accuracy))
 
     if args.rationale_model:
         LOG.info('Running baseline {} for QA->R task (with ground-truth answers)'.format(args.split))
@@ -130,8 +130,8 @@ def compute_baseline(model, params, args):
             num_gpus,
         )
         rationale_pred = rationale_probs.argmax(1)
-        rationale_accuracy = float(np.mean(rationale_gt == rationale_pred))
-        LOG.info('Baseline QA->R accuracy (ground-truth answers): {}'.format(rationale_accuracy))
+        rationale_accuracy = float(np.mean(rationale_gt == rationale_pred)) * 100.0
+        LOG.info('Baseline QA->R accuracy (ground-truth answers): {:0.2f}'.format(rationale_accuracy))
 
     if args.answer_model and args.rationale_model:
         LOG.info('Running baseline {} for QA->R task (with predicted answers)'.format(args.split))
@@ -146,14 +146,14 @@ def compute_baseline(model, params, args):
             num_gpus,
         )
         rationale_pred = rationale_probs.argmax(1)
-        rationale_accuracy_pred = float(np.mean(rationale_gt == rationale_pred))
-        LOG.info('Baseline QA->R accuracy (predicted answers): {}'.format(rationale_accuracy_pred))
+        rationale_accuracy_pred = float(np.mean(rationale_gt == rationale_pred)) * 100.0
+        LOG.info('Baseline QA->R accuracy (predicted answers): {:0.2f}'.format(rationale_accuracy_pred))
 
         # Compute accuracy for Q->AR
         ar_gt = list(zip(answer_gt, rationale_gt))
         ar_pred = list(zip(answer_pred, rationale_pred))
-        ar_accuracy = float(np.mean([gt == pred for gt, pred in zip(ar_gt, ar_pred)]))
-        LOG.info('Baseline Q->A: {}, QA->R: {}, Q->AR: {}'.format(
+        ar_accuracy = float(np.mean([gt == pred for gt, pred in zip(ar_gt, ar_pred)])) * 100.0
+        LOG.info('Baseline Q->A: {:0.2f}, QA->R: {:0.2f}, Q->AR: {:0.2f}'.format(
             answer_accuracy, rationale_accuracy, ar_accuracy))
 
 
@@ -169,21 +169,21 @@ def joint_eval(model, params, args):
         num_gpus,
     )
     ar_pred = ar_probs.argmax(1)
-    ar_accuracy = float(np.mean(ar_gt == ar_pred))
+    ar_accuracy = float(np.mean(ar_gt == ar_pred)) * 100.0
 
     # Measure answer and rationale accuracy individually
     answer_gt, rationale_gt = ar_gt // 4, ar_gt % 4
     answer_pred, rationale_pred = ar_pred // 4, ar_pred % 4
-    answer_accuracy = float(np.mean(answer_gt == answer_pred))
-    rationale_accuracy = float(np.mean(rationale_gt == rationale_pred))
+    answer_accuracy = float(np.mean(answer_gt == answer_pred)) * 100.0
+    rationale_accuracy = float(np.mean(rationale_gt == rationale_pred)) * 100.0
 
     # Measure QA->R accuracy with ground-truth answers by taking argmax of
     # the subset of the 16-way softmax that corresponds to ground-truth answer.
     rationale_pred = [probs[ans*4 : (ans+1)*4].argmax() \
             for probs, ans in zip(ar_probs, answer_gt)]
-    rationale_accuracy_gt = float(np.mean(rationale_gt == rationale_pred))
+    rationale_accuracy_gt = float(np.mean(rationale_gt == rationale_pred)) * 100.0
 
-    LOG.info('Joint Q->A: {}, QA->R: {}, QA->R (gt answers): {}, Q->AR: {}'.format(
+    LOG.info('Joint Q->A: {:0.2f}, QA->R: {:0.2f}, QA->R (gt answers): {:0.2f}, Q->AR: {:0.2f}'.format(
         answer_accuracy, rationale_accuracy, rationale_accuracy_gt, ar_accuracy))
 
 
@@ -236,8 +236,8 @@ def multitask_eval(model, params, args):
         num_gpus,
     )
     answer_pred = answer_probs.argmax(1)
-    answer_accuracy = float(np.mean(answer_gt == answer_pred))
-    LOG.info('Multitask Q->A accuracy: {}'.format(answer_accuracy))
+    answer_accuracy = float(np.mean(answer_gt == answer_pred)) * 100.0
+    LOG.info('Multitask Q->A accuracy: {:0.2f}'.format(answer_accuracy))
 
     LOG.info('Running multitask {} for QA->R task (with ground-truth answers)'.format(args.split))
     model.module.set_singletask_mode('rationale')
@@ -252,8 +252,8 @@ def multitask_eval(model, params, args):
         probs_key='rationale_probs',
     )
     rationale_pred = rationale_probs.argmax(1)
-    rationale_accuracy = float(np.mean(rationale_gt == rationale_pred))
-    LOG.info('Multitask QA->R accuracy: {}'.format(rationale_accuracy))
+    rationale_accuracy = float(np.mean(rationale_gt == rationale_pred)) * 100.0
+    LOG.info('Multitask QA->R accuracy: {:0.2f}'.format(rationale_accuracy))
 
     LOG.info('Running multitask {} for QA->R task (with predicted answers)'.format(args.split))
     model.module.set_singletask_mode('rationale')
@@ -270,14 +270,14 @@ def multitask_eval(model, params, args):
         probs_key='rationale_probs',
     )
     rationale_pred = rationale_probs.argmax(1)
-    rationale_accuracy_pred = float(np.mean(rationale_gt == rationale_pred))
-    LOG.info('Multitask QA->R accuracy (predicted answers): {}'.format(rationale_accuracy_pred))
+    rationale_accuracy_pred = float(np.mean(rationale_gt == rationale_pred)) * 100.0
+    LOG.info('Multitask QA->R accuracy (predicted answers): {:0.2f}'.format(rationale_accuracy_pred))
 
     # Compute accuracy for Q->AR
     ar_gt = list(zip(answer_gt, rationale_gt))
     ar_pred = list(zip(answer_pred, rationale_pred))
-    ar_accuracy = float(np.mean([gt == pred for gt, pred in zip(ar_gt, ar_pred)]))
-    LOG.info('Multitask Q->A: {}, QA->R: {}, Q->AR: {}'.format(
+    ar_accuracy = float(np.mean([gt == pred for gt, pred in zip(ar_gt, ar_pred)])) * 100.0
+    LOG.info('Multitask Q->A: {:0.2f}, QA->R: {:0.2f}, Q->AR: {:0.2f}'.format(
         answer_accuracy, rationale_accuracy, ar_accuracy))
 
 
