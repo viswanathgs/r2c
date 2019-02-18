@@ -52,9 +52,9 @@ source activate /private/home/"$USER"/.conda/envs/vcr
 
 PARAM_FILE=${1:-"default"}
 BASEDIR=${2:-"/private/home/$USER/projects/r2c"}
-ANSWER_MODEL=${3:-"/checkpoint/viswanath/r2c/models/baseline_answer/best.th"}
-RATIONALE_MODEL=${4:-"/checkpoint/viswanath/r2c/models/baseline_rationale/best.th"}
-AR_MODEL=${5:-"/checkpoint/viswanath/r2c/models/joint_model/best.th"}
+ANSWER_MODEL=$3  # ${3:-"/checkpoint/viswanath/r2c/models/baseline_answer/best.th"}
+RATIONALE_MODEL=$4  # ${4:-"/checkpoint/viswanath/r2c/models/baseline_rationale/best.th"}
+AR_MODEL=$5  #  ${5:-"/checkpoint/viswanath/r2c/models/joint_model/best.th"}
 
 SOURCE="$BASEDIR"/scripts/run_eval.py
 PARAMS="$BASEDIR"/models/multiatt/"$PARAM_FILE".json
@@ -64,8 +64,18 @@ echo "Running job $SLURM_JOB_ID on $SLURMD_NODENAME"
 export PYTHONPATH="$PYTHONPATH":"$BASEDIR"
 export PYTHONUNBUFFERED=True
 
-srun --label python $SOURCE \
+ARGS=""
+if [ ! -z "$ANSWER_MODEL" ]; then
+  ARGS="$ARGS --answer_model $ANSWER_MODEL"
+fi
+if [ ! -z "$RATIONALE_MODEL" ]; then
+  ARGS="$ARGS --rationale_model $RATIONALE_MODEL"
+fi
+if [ ! -z "$AR_MODEL" ]; then
+  ARGS="$ARGS --ar_model $AR_MODEL"
+fi
+
+srun --label \
+  python $SOURCE \
   --params $PARAMS \
-  --answer_model $ANSWER_MODEL \
-  --rationale_model $RATIONALE_MODEL \
-  --ar_model $AR_MODEL
+  $ARGS

@@ -4,13 +4,14 @@ answer (Q->A) and rationate (QA->R) tasks. First runs the Q->A task with
 the given model, and then conditioned on those predictions, runs the QA->R task.
 """
 
+import faiss
 import argparse
 import numpy as np
 import torch
 import pandas as pd
 
 from allennlp.common.params import Params
-from dataloaders.vcr import VCR, VCRLoader
+from dataloaders.vcr import VCR, VCRLoader, vcr_splits
 from torch.nn import DataParallel
 from utils.pytorch_misc import restore_model_state
 
@@ -53,18 +54,19 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_val_set(split, params, mode, all_answers_for_rationale=False):
-    return VCR(
-        split=split,
+def load_val_set(split, params, mode, **kwargs):
+    _, val, test = vcr_splits(
         mode=mode,
         embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
         only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True),
-        all_answers_for_rationale=all_answers_for_rationale,
-        use_omcs=params['dataset_reader'].get('use_omcs', False),
+        use_precomputed_omcs=params['dataset_reader'].get('use_precomputed_omcs', False),
+        **kwargs,
     )
+    return val if split == 'val' else test
 
-
-def run_eval(model, model_path, ds, batch_size, num_gpus):
+def run_eval(model, model_path, ds, batch_size, num_gpus,
+        label_key='label',
+        probs_key='label_probs'):
     LOG.info('Loading model state from {}'.format(model_path))
     restore_model_state(model, model_path)
 
@@ -92,10 +94,10 @@ def run_eval(model, model_path, ds, batch_size, num_gpus):
         with torch.no_grad():
             batch = _to_gpu(batch)
             output_dict = model(**batch)
-            probs.append(output_dict['label_probs'].detach().cpu().numpy())
+            probs.append(output_dict[probs_key].detach().cpu().numpy())
             ids += [m['annot_id'] for m in batch['metadata']]
-            if 'label' in batch:
-                labels.append(batch['label'].detach().cpu().numpy())
+            if label_key in batch:
+                labels.append(batch[label_key].detach().cpu().numpy())
         LOG.info("{} / {}".format(b + 1, len(ds_loader)))
     labels = np.concatenate(labels, 0) if len(labels) > 0 else None
     probs = np.concatenate(probs, 0)
@@ -114,8 +116,8 @@ def compute_baseline(model, params, args):
             num_gpus,
         )
         answer_pred = answer_probs.argmax(1)
-        answer_accuracy = float(np.mean(answer_gt == answer_pred))
-        LOG.info('Baseline Q->A accuracy: {}'.format(answer_accuracy))
+        answer_accuracy = float(np.mean(answer_gt == answer_pred)) * 100.0
+        LOG.info('Baseline Q->A accuracy: {:0.2f}'.format(answer_accuracy))
 
     if args.rationale_model:
         LOG.info('Running baseline {} for QA->R task (with ground-truth answers)'.format(args.split))
@@ -128,8 +130,8 @@ def compute_baseline(model, params, args):
             num_gpus,
         )
         rationale_pred = rationale_probs.argmax(1)
-        rationale_accuracy = float(np.mean(rationale_gt == rationale_pred))
-        LOG.info('Baseline QA->R accuracy (ground-truth answers): {}'.format(rationale_accuracy))
+        rationale_accuracy = float(np.mean(rationale_gt == rationale_pred)) * 100.0
+        LOG.info('Baseline QA->R accuracy (ground-truth answers): {:0.2f}'.format(rationale_accuracy))
 
     if args.answer_model and args.rationale_model:
         LOG.info('Running baseline {} for QA->R task (with predicted answers)'.format(args.split))
@@ -144,14 +146,14 @@ def compute_baseline(model, params, args):
             num_gpus,
         )
         rationale_pred = rationale_probs.argmax(1)
-        rationale_accuracy_pred = float(np.mean(rationale_gt == rationale_pred))
-        LOG.info('Baseline QA->R accuracy (predicted answers): {}'.format(rationale_accuracy_pred))
+        rationale_accuracy_pred = float(np.mean(rationale_gt == rationale_pred)) * 100.0
+        LOG.info('Baseline QA->R accuracy (predicted answers): {:0.2f}'.format(rationale_accuracy_pred))
 
         # Compute accuracy for Q->AR
         ar_gt = list(zip(answer_gt, rationale_gt))
         ar_pred = list(zip(answer_pred, rationale_pred))
-        ar_accuracy = float(np.mean([gt == pred for gt, pred in zip(ar_gt, ar_pred)]))
-        LOG.info('Baseline Q->A: {}, QA->R: {}, Q->AR: {}'.format(
+        ar_accuracy = float(np.mean([gt == pred for gt, pred in zip(ar_gt, ar_pred)])) * 100.0
+        LOG.info('Baseline Q->A: {:0.2f}, QA->R: {:0.2f}, Q->AR: {:0.2f}'.format(
             answer_accuracy, rationale_accuracy, ar_accuracy))
 
 
@@ -167,21 +169,21 @@ def joint_eval(model, params, args):
         num_gpus,
     )
     ar_pred = ar_probs.argmax(1)
-    ar_accuracy = float(np.mean(ar_gt == ar_pred))
+    ar_accuracy = float(np.mean(ar_gt == ar_pred)) * 100.0
 
     # Measure answer and rationale accuracy individually
     answer_gt, rationale_gt = ar_gt // 4, ar_gt % 4
     answer_pred, rationale_pred = ar_pred // 4, ar_pred % 4
-    answer_accuracy = float(np.mean(answer_gt == answer_pred))
-    rationale_accuracy = float(np.mean(rationale_gt == rationale_pred))
+    answer_accuracy = float(np.mean(answer_gt == answer_pred)) * 100.0
+    rationale_accuracy = float(np.mean(rationale_gt == rationale_pred)) * 100.0
 
     # Measure QA->R accuracy with ground-truth answers by taking argmax of
     # the subset of the 16-way softmax that corresponds to ground-truth answer.
     rationale_pred = [probs[ans*4 : (ans+1)*4].argmax() \
             for probs, ans in zip(ar_probs, answer_gt)]
-    rationale_accuracy_gt = float(np.mean(rationale_gt == rationale_pred))
+    rationale_accuracy_gt = float(np.mean(rationale_gt == rationale_pred)) * 100.0
 
-    LOG.info('Joint Q->A: {}, QA->R: {}, QA->R (gt answers): {}, Q->AR: {}'.format(
+    LOG.info('Joint Q->A: {:0.2f}, QA->R: {:0.2f}, QA->R (gt answers): {:0.2f}, Q->AR: {:0.2f}'.format(
         answer_accuracy, rationale_accuracy, rationale_accuracy_gt, ar_accuracy))
 
 
@@ -221,10 +223,70 @@ def joint_test(model, params, args):
     to_leaderboard_csv(probs, ids, args.outfile)
 
 
+def multitask_eval(model, params, args):
+    # Run val Q->A and QA->R independently
+    LOG.info('Running multitask {} for Q->A task'.format(args.split))
+    model.module.set_singletask_mode('answer')
+    val = load_val_set(args.split, params, 'multitask')
+    answer_gt, answer_probs, ids = run_eval(
+        model,
+        args.ar_model,
+        val,
+        args.batch_size,
+        num_gpus,
+    )
+    answer_pred = answer_probs.argmax(1)
+    answer_accuracy = float(np.mean(answer_gt == answer_pred)) * 100.0
+    LOG.info('Multitask Q->A accuracy: {:0.2f}'.format(answer_accuracy))
+
+    LOG.info('Running multitask {} for QA->R task (with ground-truth answers)'.format(args.split))
+    model.module.set_singletask_mode('rationale')
+    val = load_val_set(args.split, params, 'multitask')
+    rationale_gt, rationale_probs, ids = run_eval(
+        model,
+        args.ar_model,
+        val,
+        args.batch_size,
+        num_gpus,
+        label_key='rationale_label',
+        probs_key='rationale_probs',
+    )
+    rationale_pred = rationale_probs.argmax(1)
+    rationale_accuracy = float(np.mean(rationale_gt == rationale_pred)) * 100.0
+    LOG.info('Multitask QA->R accuracy: {:0.2f}'.format(rationale_accuracy))
+
+    LOG.info('Running multitask {} for QA->R task (with predicted answers)'.format(args.split))
+    model.module.set_singletask_mode('rationale')
+    val = load_val_set(args.split, params, 'multitask', all_answers_for_rationale=True)
+    # Update gt answers with Q->A predictions
+    val.set_answer_labels(answer_pred)
+    rationale_gt, rationale_probs, _ = run_eval(
+        model,
+        args.ar_model,
+        val,
+        args.batch_size,
+        num_gpus,
+        label_key='rationale_label',
+        probs_key='rationale_probs',
+    )
+    rationale_pred = rationale_probs.argmax(1)
+    rationale_accuracy_pred = float(np.mean(rationale_gt == rationale_pred)) * 100.0
+    LOG.info('Multitask QA->R accuracy (predicted answers): {:0.2f}'.format(rationale_accuracy_pred))
+
+    # Compute accuracy for Q->AR
+    ar_gt = list(zip(answer_gt, rationale_gt))
+    ar_pred = list(zip(answer_pred, rationale_pred))
+    ar_accuracy = float(np.mean([gt == pred for gt, pred in zip(ar_gt, ar_pred)])) * 100.0
+    LOG.info('Multitask Q->A: {:0.2f}, QA->R: {:0.2f}, Q->AR: {:0.2f}'.format(
+        answer_accuracy, rationale_accuracy, ar_accuracy))
+
+
 if __name__ == '__main__':
     args = parse_args()
 
     params = Params.from_file(args.params)
+    multitask = 'MultiTask' in params['model']['type']
+
     model = Model.from_params(params=params['model'])
     LOG.info('Loaded model {} from {}'.format(
         params['model'].get('type', ''), args.params))
@@ -238,8 +300,12 @@ if __name__ == '__main__':
         assert args.split == 'val', "Not yet supported"
         compute_baseline(model, params, args)
 
-    if args.ar_model:
+    if args.ar_model and not multitask:
         if args.split == 'val':
             joint_eval(model, params, args)
         else:
             joint_test(model, params, args)
+
+    if args.ar_model and multitask:
+        assert args.split == 'val', "Not yet supported"
+        multitask_eval(model, params, args)

@@ -1,10 +1,10 @@
 {
   "dataset_reader": {
     "type": "vswag",
-    "use_omcs": true
+    "use_precomputed_omcs": false
   },
   "model": {
-    "type": "MultiHopAttentionQA",
+    "type": "MultiTaskMultiHopAttentionQA",
     "span_encoder": {
       "type": "lstm",
       "input_size": 2048,
@@ -24,12 +24,18 @@
     "pool_question": true,
     "pool_answer": true,
     "initializer": [
-    [".*final_mlp.*weight", {"type": "xavier_uniform"}],
-    [".*final_mlp.*bias", {"type": "zero"}],
+    [".*mlp.*weight", {"type": "xavier_uniform"}],
+    [".*mlp.*bias", {"type": "zero"}],
     [".*weight_ih.*", {"type": "xavier_uniform"}],
     [".*weight_hh.*", {"type": "orthogonal"}],
     [".*bias_ih.*", {"type": "zero"}],
-    [".*bias_hh.*", {"type": "lstm_hidden_bias"}]]
+    [".*bias_hh.*", {"type": "lstm_hidden_bias"}]],
+    "learned_omcs": {
+      "enabled": true,
+      "use_sentence_embeddings": false,
+      "max_neighbors": 5,
+      "similarity_thresh": 0.0
+    }
   },
   "trainer": {
     "optimizer": {

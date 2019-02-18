@@ -4,9 +4,13 @@ Let's get the relationships yo
 
 from typing import Dict, List, Any
 
+import faiss
+import logging
 import torch
 import torch.nn.functional as F
 import torch.nn.parallel
+import numpy as np
+import os
 from allennlp.data.vocabulary import Vocabulary
 from allennlp.models.model import Model
 from allennlp.modules import TextFieldEmbedder, Seq2SeqEncoder, FeedForward, InputVariationalDropout, TimeDistributed
@@ -15,6 +19,12 @@ from allennlp.modules.matrix_attention import BilinearMatrixAttention
 from utils.detector import SimpleDetector
 from allennlp.nn.util import masked_softmax, weighted_sum, replace_masked_values
 from allennlp.nn import InitializerApplicator
+
+from config import VCR_ANNOTS_DIR
+from data.omcs.extract_omcs_features import load_omcs_embeddings, normalize_embedding
+
+logging.basicConfig(level=logging.INFO)
+LOG = logging.getLogger(__name__)
 
 
 @Model.register("MultiHopAttentionQATrunk")
@@ -32,6 +42,7 @@ class AttentionQATrunk(Model):
                  pool_answer: bool = True,
                  pool_question: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
+                 learned_omcs: dict = {},
                  ):
         # VCR dataset becomes unpicklable due to VCR.vocab, but we don't need
         # to pass in vocab from the dataset anyway as the BERT embeddings are
@@ -68,6 +79,21 @@ class AttentionQATrunk(Model):
                                         (span_encoder.get_output_dim(), self.pool_answer),
                                         (span_encoder.get_output_dim(), self.pool_question)] if to_pool])
 
+        self.omcs_index = None
+        if learned_omcs.get('enabled', False):
+            use_sentence_embs = learned_omcs.get('use_sentence_embeddings', True)
+            omcs_embs, self.omcs_index = self.load_omcs(use_sentence_embs)
+            # Let's replicate the OMCS embeddings to each device to attend over them
+            # after FAISS lookup. We could also do faiss.search_and_reconstruct, but
+            # that prevents us from using quantized indices for faster search which
+            # we might need to.
+            self.register_buffer('omcs_embs', omcs_embs)
+            self.omcs_mlp = torch.nn.Sequential(
+                torch.nn.Linear(768, self.omcs_index.d),
+            )
+            self.k = learned_omcs.get('max_neighbors', 5)
+            self.similarity_thresh = learned_omcs.get('similarity_thresh', 0.0)
+
         initializer(self)
 
     def _collect_obj_reps(self, span_tags, object_reps):
@@ -96,14 +122,91 @@ class AttentionQATrunk(Model):
         :param span_mask: [batch_size, ..leading_dims.., span_mask
         :return:
         """
-        retrieved_feats = self._collect_obj_reps(span_tags, object_reps)
+        if self.omcs_index is not None:
+            # TODO (viswanath): Batch faiss lookup for question and answer embeddings?
+            vcr_omcs_embs = self.attended_omcs_embeddings(span['bert'])
+            bert = torch.cat((span['bert'], vcr_omcs_embs), -1)
+        else:
+            bert = span['bert']
 
-        span_rep = torch.cat((span['bert'], retrieved_feats), -1)
+        retrieved_feats = self._collect_obj_reps(span_tags, object_reps)
+        span_rep = torch.cat((bert, retrieved_feats), -1)
         # add recurrent dropout here
         if self.rnn_input_dropout:
             span_rep = self.rnn_input_dropout(span_rep)
 
         return self.span_encoder(span_rep, span_mask), retrieved_feats
+
+    def load_omcs(self, use_sentence_embs=True):
+        omcs_h5_file = os.path.join(VCR_ANNOTS_DIR, 'omcs', 'bert_da_omcs.h5')
+        # Embeddings are stored as float16, but faiss requires float32
+        _, sentence_embs, word_embs = load_omcs_embeddings(omcs_h5_file, dtype=np.float32)
+
+        if use_sentence_embs:
+            embs = np.vstack(sentence_embs)
+            index_file = 'bert_da_omcs_sentences.faissindex'
+        else:
+            embs = np.vstack(word_embs)
+            index_file = 'bert_da_omcs_words.faissindex'
+        index_file = os.path.join(VCR_ANNOTS_DIR, 'omcs', index_file)
+
+        index = faiss.read_index(index_file)
+        assert len(embs) == index.ntotal
+        assert embs.shape[1] == index.d
+        LOG.info('Loaded faiss index with OMCS embeddings from {}, ntotal={}'.format(
+            index_file, index.ntotal))
+
+        self.co = faiss.GpuMultipleClonerOptions()
+        self.co.shard = False  # Replica mode (dataparallel) instead of shard mode
+        index = faiss.index_cpu_to_all_gpus(index, self.co)
+        return torch.from_numpy(embs), index
+
+    def normalize_embedding(self, embs):
+        return embs / torch.norm(embs, dim=1).view(-1, 1)
+
+    def attended_omcs_embeddings(self, vcr_embs):
+        projected_embs = self.normalize_embedding(
+            self.omcs_mlp(vcr_embs).view(-1, vcr_embs.shape[-1])
+        )
+        n, d = projected_embs.size()
+        device = projected_embs.get_device()
+
+        def swig_ptr_from_FloatTensor(x):
+            assert x.is_contiguous()
+            assert x.dtype == torch.float32
+            return faiss.cast_integer_to_float_ptr(x.storage().data_ptr())
+
+        def swig_ptr_from_LongTensor(x):
+            assert x.is_contiguous()
+            assert x.dtype == torch.int64, 'dtype=%s' % x.dtype
+            return faiss.cast_integer_to_long_ptr(x.storage().data_ptr())
+
+        D = torch.empty((n, self.k), dtype=torch.float32, device=device)
+        I = torch.empty((n, self.k), dtype=torch.int64, device=device)
+        torch.cuda.synchronize()
+        self.omcs_index.at(device).search_c(
+            n,
+            swig_ptr_from_FloatTensor(projected_embs),
+            self.k,
+            swig_ptr_from_FloatTensor(D),
+            swig_ptr_from_LongTensor(I),
+        )
+        torch.cuda.synchronize()
+
+        # Compute softmax of similarity scores.
+        # Only use those with cosine similarity scores above thresh.
+        # TODO (viswanath): Use scaled-dot-product attn w/o normalization?
+        mask = (D >= self.similarity_thresh)
+        attention_wts = masked_softmax(D, mask)
+
+        # Fetch the nearest found embeddings and then apply attention
+        # using the computed weights.
+        nearest_omcs_embs = self.omcs_embs[I]  # (n, k, d)
+        attended_omcs_embs = torch.einsum('nk,nkd->nd',
+                                          (attention_wts, nearest_omcs_embs))
+
+        # Reshape to match original vcr_embs
+        return attended_omcs_embs.view(*vcr_embs.shape[:-1], -1)
 
     def forward(self,
                 images: torch.Tensor,
@@ -213,6 +316,7 @@ class AttentionQA(Model):
                  pool_answer: bool = True,
                  pool_question: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
+                 learned_omcs: dict = {},
                  ):
         # VCR dataset becomes unpicklable due to VCR.vocab, but we don't need
         # to pass in vocab from the dataset anyway as the BERT embeddings are
@@ -234,6 +338,7 @@ class AttentionQA(Model):
             pool_answer,
             pool_question,
             initializer,
+            learned_omcs,
         )
 
         self.final_mlp = torch.nn.Sequential(
