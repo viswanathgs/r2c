@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: ./enrich_vcr_with_omcs.sh <BASE_DIR_TO_R2C_SOURCE> <BERT_DATA_DIR>
+# Usage: ./enrich_vcr_with_omcs.sh <BERT_DATA_DIR>
 
 . /usr/share/modules/init/sh
 
@@ -14,8 +14,8 @@ module load anaconda3/5.0.1
 
 source activate /private/home/"$USER"/.conda/envs/vcr
 
-BASEDIR=${1:-"/private/home/$USER/projects/r2c"}
-DATADIR=${2:-"/private/home/viswanath/datasets/vcr1/data/omcs"}
+BASEDIR=$PWD
+DATADIR=${1:-"/private/home/viswanath/datasets/vcr1/data/omcs"}
 
 export PYTHONPATH="$PYTHONPATH":"$BASEDIR"
 export PYTHONUNBUFFERED=True
