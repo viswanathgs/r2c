@@ -124,9 +124,9 @@ class MultiTaskAttentionQA(Model):
                 rationale_label: torch.LongTensor = None,
         ) -> Dict[str, torch.Tensor]:
         output_dict = {}
-        answer_loss = 0.0
-        rationale_loss = 0.0
-        cnn_reg_loss = 0.0
+        answer_loss = torch.zeros(1, device=images.get_device())
+        rationale_loss = torch.zeros(1, device=images.get_device())
+        cnn_reg_loss = torch.zeros(1, device=images.get_device())
 
         if self.answer_mode:
             answer_features = self.trunk.forward(

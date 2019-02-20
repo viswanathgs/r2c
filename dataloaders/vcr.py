@@ -440,12 +440,19 @@ class MultiTaskVCR(Dataset):
     def eval_splits(cls, **kwargs):
         """ Helper method to generate splits of the dataset. Use this for testing, because it will
             condition on everything."""
-        for forbidden_key in ['mode', 'split', 'conditioned_answer_choice']:
+        for forbidden_key in ['split', 'conditioned_answer_choice']:
             if forbidden_key in kwargs:
                 raise ValueError(f"don't supply {forbidden_key} to eval_splits()")
+        if 'mode' in kwargs:
+            assert kwargs['mode'] == 'multitask'
+        else:
+            kwargs['mode'] == 'multitask'
 
-        stuff_to_return = [cls(split='test', mode='multitask', **kwargs)] + [
-            cls(split='test', mode='multitask', conditioned_answer_choice=i, **kwargs) for i in range(4)]
+        # We also add a dummy conditioned_answer_choice for answer mode since
+        # MultiTaskVCR loads both answers and rationales, and test partition
+        # doesn't have `answer_label` set otherwise.
+        stuff_to_return = [cls(split='test', conditioned_answer_choice=0, **kwargs)] + [
+            cls(split='test', conditioned_answer_choice=i, **kwargs) for i in range(4)]
         return tuple(stuff_to_return)
 
     def __len__(self):

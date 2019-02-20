@@ -11,7 +11,7 @@ import torch
 import pandas as pd
 
 from allennlp.common.params import Params
-from dataloaders.vcr import VCR, VCRLoader, vcr_splits
+from dataloaders.vcr import VCR, VCRLoader, vcr_splits, vcr_eval_splits
 from torch.nn import DataParallel
 from utils.pytorch_misc import restore_model_state
 
@@ -200,6 +200,7 @@ def to_leaderboard_csv(probs, ids, outfile):
     probs_df['annot_id'] = ids
     probs_df = probs_df.set_index('annot_id', drop=True)
     probs_df.to_csv(outfile)
+    LOG.info('Leaderboard output written to {}'.format(outfile))
 
 
 def joint_test(model, params, args):
@@ -281,6 +282,45 @@ def multitask_eval(model, params, args):
         answer_accuracy, rationale_accuracy, ar_accuracy))
 
 
+def multitask_test(model, params, args):
+    test_modes = vcr_eval_splits(
+        mode='multitask',
+        embs_to_load=params['dataset_reader'].get('embs', 'bert_da'),
+        only_use_relevant_dets=params['dataset_reader'].get('only_use_relevant_dets', True),
+        use_precomputed_omcs=params['dataset_reader'].get('use_precomputed_omcs', False),
+    )
+
+    probs_grp = []
+    ids_grp = []
+    for (vcr_dataset, mode_long) in zip(test_modes, ['answer'] + [f'rationale_{i}' for i in range(4)]):
+        LOG.info('Running multitask test for {}'.format(mode_long))
+        mode = mode_long.split('_')[0]
+        model.module.set_singletask_mode(mode)
+
+        if mode == 'answer':
+            label_key = 'label'
+            probs_key = 'label_probs'
+        else:
+            label_key = 'rationale_label'
+            probs_key = 'rationale_probs'
+        _, probs, ids = run_eval(
+            model,
+            args.ar_model,
+            vcr_dataset,
+            args.batch_size,
+            num_gpus,
+            label_key,
+            probs_key,
+        )
+        probs_grp.append(probs)
+        ids_grp.append(ids)
+
+    # Double check the IDs are in the same order for everything
+    assert [x == ids_grp[0] for x in ids_grp]
+    probs_grp = np.stack(probs_grp, 1).reshape((-1, 20))
+    to_leaderboard_csv(probs_grp, ids_grp[0], args.outfile)
+
+
 if __name__ == '__main__':
     args = parse_args()
 
@@ -307,5 +347,7 @@ if __name__ == '__main__':
             joint_test(model, params, args)
 
     if args.ar_model and multitask:
-        assert args.split == 'val', "Not yet supported"
-        multitask_eval(model, params, args)
+        if args.split == 'val':
+            multitask_eval(model, params, args)
+        else:
+            multitask_test(model, params, args)
