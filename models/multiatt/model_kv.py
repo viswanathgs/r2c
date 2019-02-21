@@ -10,7 +10,7 @@ import os
 from allennlp.data.vocabulary import Vocabulary
 from allennlp.models.model import Model
 from allennlp.modules import TextFieldEmbedder, Seq2SeqEncoder, FeedForward, InputVariationalDropout, TimeDistributed
-from allennlp.training.metrics import CategoricalAccuracy
+from allennlp.training.metrics import CategoricalAccuracy, BooleanAccuracy
 from allennlp.modules.matrix_attention import BilinearMatrixAttention
 from utils.detector import SimpleDetector
 from allennlp.nn.util import masked_softmax, weighted_sum, replace_masked_values
@@ -18,42 +18,51 @@ from allennlp.nn import InitializerApplicator
 
 from config import VCR_ANNOTS_DIR
 from data.omcs.extract_omcs_features import load_omcs_embeddings, normalize_embedding
+from models.multiatt.kv_transformer import KeyValueTransformer
 
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger(__name__)
 
 
-@Model.register("MultiHopAttentionQATrunk")
-class AttentionQATrunk(Model):
-    def __init__(self,
-                 span_encoder: Seq2SeqEncoder,
-                 reasoning_encoder: Seq2SeqEncoder,
-                 input_dropout: float = 0.3,
-                 hidden_dim_maxpool: int = 1024,
-                 class_embs: bool=True,
-                 reasoning_use_obj: bool=True,
-                 reasoning_use_answer: bool=True,
-                 reasoning_use_question: bool=True,
-                 pool_reasoning: bool = True,
-                 pool_answer: bool = True,
-                 pool_question: bool = False,
-                 initializer: InitializerApplicator = InitializerApplicator(),
-                 learned_omcs: dict = {},
-                 ):
+@Model.register("KeyValueAttentionTrunk")
+class KeyValueAttentionTrunk(Model):
+    def __init__(
+        self,
+        span_encoder: Seq2SeqEncoder,
+        input_dropout: float = 0.3,
+        class_embs: bool=True,
+        initializer: InitializerApplicator = InitializerApplicator(),
+        learned_omcs: dict = {},
+    ):
         # VCR dataset becomes unpicklable due to VCR.vocab, but we don't need
         # to pass in vocab from the dataset anyway as the BERT embeddings are
         # pretrained and stored in h5 files per dataset instance. Just pass
         # a dummy vocab instance for init.
         vocab = Vocabulary()
-        super(AttentionQATrunk, self).__init__(vocab)
+        super(KeyValueAttentionTrunk, self).__init__(vocab)
 
         self.detector = SimpleDetector(pretrained=True, average_pool=True, semantic=class_embs, final_dim=512)
-        ###################################################################################################
 
         self.rnn_input_dropout = TimeDistributed(InputVariationalDropout(input_dropout)) if input_dropout > 0 else None
 
         self.span_encoder = TimeDistributed(span_encoder)
-        self.reasoning_encoder = TimeDistributed(reasoning_encoder)
+        span_dim = span_encoder.get_output_dim()
+
+        self.question_mlp = torch.nn.Sequential(
+            # 2 (bidirectional) * 4 (num_answers) * dim -> dim
+            torch.nn.Linear(8 * span_dim, span_dim),
+            torch.nn.Tanh(),
+        )
+        self.answer_mlp = torch.nn.Sequential(
+            # 2 (bidirectional) * dim -> 2 (key-value) * dim
+            torch.nn.Linear(2 * span_dim, 2 * span_dim),
+            torch.nn.Tanh(),
+        )
+        self.obj_mlp = torch.nn.Sequential(
+            # obj_dim -> 2 (key-value) * dim
+            torch.nn.Linear(self.detector.final_dim, 2 * span_dim),
+            torch.nn.Tanh(),
+        )
 
         self.span_attention = BilinearMatrixAttention(
             matrix_1_dim=span_encoder.get_output_dim(),
@@ -65,15 +74,11 @@ class AttentionQATrunk(Model):
             matrix_2_dim=self.detector.final_dim,
         )
 
-        self.reasoning_use_obj = reasoning_use_obj
-        self.reasoning_use_answer = reasoning_use_answer
-        self.reasoning_use_question = reasoning_use_question
-        self.pool_reasoning = pool_reasoning
-        self.pool_answer = pool_answer
-        self.pool_question = pool_question
-        self.output_dim = sum([d for d, to_pool in [(reasoning_encoder.get_output_dim(), self.pool_reasoning),
-                                        (span_encoder.get_output_dim(), self.pool_answer),
-                                        (span_encoder.get_output_dim(), self.pool_question)] if to_pool])
+        self.kv_transformer = KeyValueTransformer(
+            dim=span_dim,
+            num_heads=8,
+            num_steps=4,
+        )
 
         self.omcs_index = None
         if learned_omcs.get('enabled', False):
@@ -127,11 +132,19 @@ class AttentionQATrunk(Model):
 
         retrieved_feats = self._collect_obj_reps(span_tags, object_reps)
         span_rep = torch.cat((bert, retrieved_feats), -1)
-        # add recurrent dropout here
+        # Add recurrent dropout here
         if self.rnn_input_dropout:
             span_rep = self.rnn_input_dropout(span_rep)
 
-        return self.span_encoder(span_rep, span_mask), retrieved_feats
+        # [batch, num_answers, seq_length, dim]
+        span_rep = self.span_encoder(span_rep, span_mask)
+
+        # Just take the first and last time steps and obtain a single embedding
+        # per question or answer.
+        batch_size, num_answers, _, _ = span_rep.shape
+        span_rep = span_rep[:, :, [0, -1], :]
+        span_rep = span_rep.contiguous().view(batch_size, num_answers, -1)
+        return span_rep
 
     def load_omcs(self, use_sentence_embs=True):
         omcs_h5_file = os.path.join(VCR_ANNOTS_DIR, 'omcs', 'bert_da_omcs.h5')
@@ -249,103 +262,53 @@ class AttentionQATrunk(Model):
         obj_reps = self.detector(images=images, boxes=boxes, box_mask=box_mask, classes=objects, segms=segms)
 
         # Now get the question representations
-        q_rep, q_obj_reps = self.embed_span(question, question_tags, question_mask, obj_reps['obj_reps'])
-        a_rep, a_obj_reps = self.embed_span(answers, answer_tags, answer_mask, obj_reps['obj_reps'])
+        q_rep = self.embed_span(question, question_tags, question_mask, obj_reps['obj_reps'])
+        # [batch, num_answers, dim] -> [batch, num_answers * dim]
+        q_rep = q_rep.contiguous().view(q_rep.shape[0], -1)
+        q_rep = self.question_mlp(q_rep)
 
-        ####################################
-        # Perform Q by A attention
-        # [batch_size, 4, question_length, answer_length]
-        qa_similarity = self.span_attention(
-            q_rep.view(q_rep.shape[0] * q_rep.shape[1], q_rep.shape[2], q_rep.shape[3]),
-            a_rep.view(a_rep.shape[0] * a_rep.shape[1], a_rep.shape[2], a_rep.shape[3]),
-        ).view(a_rep.shape[0], a_rep.shape[1], q_rep.shape[2], a_rep.shape[2])
-        qa_attention_weights = masked_softmax(qa_similarity, question_mask[..., None], dim=2)
-        attended_q = torch.einsum('bnqa,bnqd->bnad', (qa_attention_weights, q_rep))
+        a_rep = self.embed_span(answers, answer_tags, answer_mask, obj_reps['obj_reps'])
+        a_rep = self.answer_mlp(a_rep)
 
-        # Have a second attention over the objects, do A by Objs
-        # [batch_size, 4, answer_length, num_objs]
-        atoo_similarity = self.obj_attention(a_rep.view(a_rep.shape[0], a_rep.shape[1] * a_rep.shape[2], -1),
-                                             obj_reps['obj_reps']).view(a_rep.shape[0], a_rep.shape[1],
-                                                            a_rep.shape[2], obj_reps['obj_reps'].shape[1])
-        atoo_attention_weights = masked_softmax(atoo_similarity, box_mask[:,None,None])
-        attended_o = torch.einsum('bnao,bod->bnad', (atoo_attention_weights, obj_reps['obj_reps']))
+        o_rep = self.obj_mlp(obj_reps['obj_reps'])
 
+        qt, a_alpha, o_alpha = self.kv_transformer(q_rep, a_rep, o_rep)
 
-        reasoning_inp = torch.cat([x for x, to_pool in [(a_rep, self.reasoning_use_answer),
-                                                           (attended_o, self.reasoning_use_obj),
-                                                           (attended_q, self.reasoning_use_question)]
-                                      if to_pool], -1)
-
-        if self.rnn_input_dropout is not None:
-            reasoning_inp = self.rnn_input_dropout(reasoning_inp)
-        reasoning_output = self.reasoning_encoder(reasoning_inp, answer_mask)
-
-
-        ###########################################
-        things_to_pool = torch.cat([x for x, to_pool in [(reasoning_output, self.pool_reasoning),
-                                                         (a_rep, self.pool_answer),
-                                                         (attended_q, self.pool_question)] if to_pool], -1)
-
-        pooled_rep = replace_masked_values(things_to_pool,answer_mask[...,None], -1e7).max(2)[0]
         output_dict = {
-            'pooled_rep': pooled_rep,
+            'pooled_rep': qt,
+            'probs': a_alpha,
             'cnn_regularization_loss': obj_reps['cnn_regularization_loss'],
-            # Uncomment to visualize attention, if you want
-            # 'qa_attention_weights': qa_attention_weights,
-            # 'atoo_attention_weights': atoo_attention_weights,
         }
         return output_dict
 
 
-@Model.register("MultiHopAttentionQA")
-class AttentionQA(Model):
-    def __init__(self,
-                 span_encoder: Seq2SeqEncoder,
-                 reasoning_encoder: Seq2SeqEncoder,
-                 input_dropout: float = 0.3,
-                 hidden_dim_maxpool: int = 1024,
-                 class_embs: bool=True,
-                 reasoning_use_obj: bool=True,
-                 reasoning_use_answer: bool=True,
-                 reasoning_use_question: bool=True,
-                 pool_reasoning: bool = True,
-                 pool_answer: bool = True,
-                 pool_question: bool = False,
-                 initializer: InitializerApplicator = InitializerApplicator(),
-                 learned_omcs: dict = {},
-                 ):
+@Model.register("KeyValueAttention")
+class KeyValueAttention(Model):
+    def __init__(
+        self,
+        span_encoder: Seq2SeqEncoder,
+        input_dropout: float = 0.3,
+        class_embs: bool=True,
+        initializer: InitializerApplicator = InitializerApplicator(),
+        learned_omcs: dict = {},
+    ):
         # VCR dataset becomes unpicklable due to VCR.vocab, but we don't need
         # to pass in vocab from the dataset anyway as the BERT embeddings are
         # pretrained and stored in h5 files per dataset instance. Just pass
         # a dummy vocab instance for init.
         vocab = Vocabulary()
-        super(AttentionQA, self).__init__(vocab)
+        super(KeyValueAttention, self).__init__(vocab)
 
-        self.trunk = AttentionQATrunk(
+        self.trunk = KeyValueAttentionTrunk(
             span_encoder,
-            reasoning_encoder,
             input_dropout,
-            hidden_dim_maxpool,
             class_embs,
-            reasoning_use_obj,
-            reasoning_use_answer,
-            reasoning_use_question,
-            pool_reasoning,
-            pool_answer,
-            pool_question,
             initializer,
             learned_omcs,
         )
 
-        self.final_mlp = torch.nn.Sequential(
-            torch.nn.Dropout(input_dropout, inplace=False),
-            torch.nn.Linear(self.trunk.output_dim, hidden_dim_maxpool),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Dropout(input_dropout, inplace=False),
-            torch.nn.Linear(hidden_dim_maxpool, 1),
-        )
-        self._accuracy = CategoricalAccuracy()
-        self._loss = torch.nn.CrossEntropyLoss()
+        self._accuracy = BooleanAccuracy()
+        self._loss = torch.nn.NLLLoss()
         initializer(self)
 
     def forward(self,
@@ -362,20 +325,6 @@ class AttentionQA(Model):
                 answer_mask: torch.LongTensor,
                 metadata: List[Dict[str, Any]] = None,
                 label: torch.LongTensor = None) -> Dict[str, torch.Tensor]:
-        """
-        :param images: [batch_size, 3, im_height, im_width]
-        :param objects: [batch_size, max_num_objects] Padded objects
-        :param boxes:  [batch_size, max_num_objects, 4] Padded boxes
-        :param box_mask: [batch_size, max_num_objects] Mask for whether or not each box is OK
-        :param question: AllenNLP representation of the question. [batch_size, num_answers, seq_length]
-        :param question_tags: A detection label for each item in the Q [batch_size, num_answers, seq_length]
-        :param question_mask: Mask for the Q [batch_size, num_answers, seq_length]
-        :param answers: AllenNLP representation of the answer. [batch_size, num_answers, seq_length]
-        :param answer_tags: A detection label for each item in the A [batch_size, num_answers, seq_length]
-        :param answer_mask: Mask for the As [batch_size, num_answers, seq_length]
-        :param metadata: Ignore, this is about which dataset item we're on
-        :param label: Optional, which item is valid
-        """
         features = self.trunk.forward(
             images,
             objects,
@@ -390,12 +339,9 @@ class AttentionQA(Model):
             answer_mask,
         )
 
-        logits = self.final_mlp(features['pooled_rep']).squeeze(2)
-        class_probabilities = F.softmax(logits, dim=-1)
-
+        probs = features['probs']
         output_dict = {
-            'label_logits': logits,
-            'label_probs': class_probabilities,
+            'label_probs': features['probs'],
             'cnn_regularization_loss': features['cnn_regularization_loss'],
             # Uncomment to visualize attention, if you want
             # 'qa_attention_weights': features['qa_attention_weights'],
@@ -403,8 +349,10 @@ class AttentionQA(Model):
         }
 
         if label is not None:
-            loss = self._loss(logits, label.long().view(-1))
-            self._accuracy(logits, label)
+            # We use NLLLoss as don't have the logits.
+            # Need to take log(softmax_probs) first.
+            loss = self._loss(torch.log(probs), label.long().view(-1))
+            self._accuracy(probs.argmax(dim=1), label)
             output_dict["loss"] = loss[None]
 
         return output_dict
