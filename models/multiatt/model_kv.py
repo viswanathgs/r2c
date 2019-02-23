@@ -292,10 +292,6 @@ class KeyValueAttention(Model):
         initializer: InitializerApplicator = InitializerApplicator(),
         learned_omcs: dict = {},
     ):
-        # VCR dataset becomes unpicklable due to VCR.vocab, but we don't need
-        # to pass in vocab from the dataset anyway as the BERT embeddings are
-        # pretrained and stored in h5 files per dataset instance. Just pass
-        # a dummy vocab instance for init.
         vocab = Vocabulary()
         super(KeyValueAttention, self).__init__(vocab)
 
@@ -349,10 +345,10 @@ class KeyValueAttention(Model):
         }
 
         if label is not None:
+            self._accuracy(probs.argmax(dim=1), label)
             # We use NLLLoss as don't have the logits.
             # Need to take log(softmax_probs) first.
             loss = self._loss(torch.log(probs), label.long().view(-1))
-            self._accuracy(probs.argmax(dim=1), label)
             output_dict["loss"] = loss[None]
 
         return output_dict

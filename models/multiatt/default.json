@@ -23,8 +23,8 @@
     "pool_question": true,
     "pool_answer": true,
     "initializer": [
-    [".*final_mlp.*weight", {"type": "xavier_uniform"}],
-    [".*final_mlp.*bias", {"type": "zero"}],
+    [".*mlp.*weight", {"type": "xavier_uniform"}],
+    [".*mlp.*bias", {"type": "zero"}],
     [".*weight_ih.*", {"type": "xavier_uniform"}],
     [".*weight_hh.*", {"type": "orthogonal"}],
     [".*bias_ih.*", {"type": "zero"}],

@@ -1,34 +1,31 @@
 {
   "dataset_reader": {
-    "type": "vswag"
+    "type": "vswag",
+    "use_precomputed_omcs": false
   },
   "model": {
-    "type": "MultiTaskMultiHopAttentionQA",
+    "type": "KeyValueAttention",
     "span_encoder": {
       "type": "lstm",
-      "input_size": 1280,
+      "input_size": 2048,
       "hidden_size": 256,
       "num_layers": 1,
       "bidirectional": true
     },
-    "reasoning_encoder": {
-      "type": "lstm",
-      "input_size": 1536,
-      "hidden_size": 256,
-      "num_layers": 2,
-      "bidirectional": true
-    },
-    "hidden_dim_maxpool": 1024,
     "input_dropout": 0.3,
-    "pool_question": true,
-    "pool_answer": true,
     "initializer": [
     [".*mlp.*weight", {"type": "xavier_uniform"}],
     [".*mlp.*bias", {"type": "zero"}],
     [".*weight_ih.*", {"type": "xavier_uniform"}],
     [".*weight_hh.*", {"type": "orthogonal"}],
     [".*bias_ih.*", {"type": "zero"}],
-    [".*bias_hh.*", {"type": "lstm_hidden_bias"}]]
+    [".*bias_hh.*", {"type": "lstm_hidden_bias"}]],
+    "learned_omcs": {
+      "enabled": true,
+      "use_sentence_embeddings": false,
+      "max_neighbors": 5,
+      "similarity_thresh": 0.0
+    }
   },
   "trainer": {
     "optimizer": {
@@ -38,7 +35,7 @@
     },
     "validation_metric": "+accuracy",
     "num_serialized_models_to_keep": 2,
-    "num_epochs": 20,
+    "num_epochs": 30,
     "grad_norm": 1.0,
     "patience": 3,
     "cuda_device": 0,

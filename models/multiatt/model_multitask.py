@@ -202,3 +202,152 @@ class MultiTaskAttentionQA(Model):
             'answer_accuracy': self._answer_accuracy.get_metric(reset),
             'rationale_accuracy': self._rationale_accuracy.get_metric(reset),
         }
+
+
+@Model.register("KeyValueMultiTaskAttention")
+class KeyValueMultiTaskAttention(Model):
+    def __init__(
+        self,
+        span_encoder: Seq2SeqEncoder,
+        input_dropout: float = 0.3,
+        class_embs: bool=True,
+        initializer: InitializerApplicator = InitializerApplicator(),
+        learned_omcs: dict = {},
+    ):
+        vocab = Vocabulary()
+        super(KeyValueMultiTaskAttention, self).__init__(vocab)
+
+        self.trunk = KeyValueAttentionTrunk(
+            span_encoder,
+            input_dropout,
+            class_embs,
+            initializer,
+            learned_omcs,
+        )
+
+        self._answer_accuracy = BooleanAccuracy()
+        self._rationale_accuracy = BooleanAccuracy()
+        self._multitask_accuracy = BooleanAccuracy()
+        self._loss = torch.nn.NLLLoss()
+
+        # If both are true, then run in multitask mode. Disable one of them
+        # using set_singletask_mode() to run in baseline answer or rationale
+        # mode. This can be used for eval purposes.
+        self.answer_mode = True
+        self.rationale_mode = True
+
+        initializer(self)
+
+    def set_singletask_mode(self, mode):
+        assert mode in ['answer', 'rationale']
+        LOG.info('Enforcing single-task {} mode in MultiTask model'.format(mode))
+        if mode == 'answer':
+            self.answer_mode = True
+            self.rationale_mode = False
+        else:
+            self.answer_mode = False
+            self.rationale_mode = True
+
+    def forward(self,
+                images: torch.Tensor,
+                objects: torch.LongTensor,
+                segms: torch.Tensor,
+                boxes: torch.Tensor,
+                box_mask: torch.LongTensor,
+                question: Dict[str, torch.Tensor],
+                question_tags: torch.LongTensor,
+                question_mask: torch.LongTensor,
+                answers: Dict[str, torch.Tensor],
+                answer_tags: torch.LongTensor,
+                answer_mask: torch.LongTensor,
+                rationale_objects: torch.LongTensor,
+                rationale_segms: torch.Tensor,
+                rationale_boxes: torch.Tensor,
+                rationale_box_mask: torch.LongTensor,
+                qa: Dict[str, torch.Tensor],
+                qa_tags: torch.LongTensor,
+                qa_mask: torch.LongTensor,
+                rationales: Dict[str, torch.Tensor],
+                rationale_tags: torch.LongTensor,
+                rationale_mask: torch.LongTensor,
+                metadata: List[Dict[str, Any]] = None,
+                label: torch.LongTensor = None,
+                rationale_label: torch.LongTensor = None,
+        ) -> Dict[str, torch.Tensor]:
+        output_dict = {}
+        answer_loss = torch.zeros(1, device=images.get_device())
+        rationale_loss = torch.zeros(1, device=images.get_device())
+        cnn_reg_loss = torch.zeros(1, device=images.get_device())
+
+        if self.answer_mode:
+            answer_features = self.trunk.forward(
+                images,
+                objects,
+                segms,
+                boxes,
+                box_mask,
+                question,
+                question_tags,
+                question_mask,
+                answers,
+                answer_tags,
+                answer_mask,
+            )
+            answer_probs = answer_features['probs']
+            answer_pred = answer_probs.argmax(dim=1)
+            output_dict.update({
+                'label_probs': answer_probs,
+            })
+            cnn_reg_loss += answer_features['cnn_regularization_loss']
+            if label is not None:
+                self._answer_accuracy(answer_pred, label)
+                # We use NLLLoss as don't have the logits.
+                # Need to take log(softmax_probs) first.
+                loss = self._loss(torch.log(answer_probs), label.long().view(-1))
+                answer_loss = loss[None]
+
+        if self.rationale_mode:
+            rationale_features = self.trunk.forward(
+                images,
+                rationale_objects,
+                rationale_segms,
+                rationale_boxes,
+                rationale_box_mask,
+                qa,
+                qa_tags,
+                qa_mask,
+                rationales,
+                rationale_tags,
+                rationale_mask,
+            )
+            rationale_probs = rationale_features['probs']
+            rationale_pred = rationale_probs.argmax(dim=1)
+            output_dict.update({
+                'rationale_probs': rationale_probs,
+            })
+            cnn_reg_loss += rationale_features['cnn_regularization_loss']
+            if rationale_label is not None:
+                self._rationale_accuracy(rationale_pred, rationale_label)
+                loss = self._loss(torch.log(rationale_probs), rationale_label.long().view(-1))
+                rationale_loss = loss[None]
+
+        # Track multi-task/joint accuracy for Q->A and QA->R
+        if self.answer_mode and self.rationale_mode and \
+                label is not None and rationale_label is not None:
+            self._multitask_accuracy(
+                torch.stack((answer_pred, rationale_pred), dim=1),
+                torch.stack((label, rationale_label), dim=1),
+            )
+
+        output_dict.update({
+            'loss': answer_loss + rationale_loss,
+            'cnn_regularization_loss': cnn_reg_loss,
+        })
+        return output_dict
+
+    def get_metrics(self, reset: bool = False) -> Dict[str, float]:
+        return {
+            'accuracy': self._multitask_accuracy.get_metric(reset),
+            'answer_accuracy': self._answer_accuracy.get_metric(reset),
+            'rationale_accuracy': self._rationale_accuracy.get_metric(reset),
+        }

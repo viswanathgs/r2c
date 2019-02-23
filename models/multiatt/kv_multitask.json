@@ -3,7 +3,7 @@
     "type": "vswag"
   },
   "model": {
-    "type": "MultiTaskMultiHopAttentionQA",
+    "type": "MultiTaskKeyValueAttention",
     "span_encoder": {
       "type": "lstm",
       "input_size": 1280,
