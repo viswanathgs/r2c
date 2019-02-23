@@ -112,7 +112,7 @@ def load_omcs_embeddings(h5_filename, dtype=np.float16):
 
 def normalize_embedding(emb):
     norm = np.linalg.norm(emb, axis=-1)
-    return emb / norm[:, np.newaxis]
+    return emb / (norm[:, np.newaxis] + 1e-10)
 
 
 def build_index(embeddings, outfile=None):

@@ -17,7 +17,7 @@ from allennlp.nn.util import masked_softmax, weighted_sum, replace_masked_values
 from allennlp.nn import InitializerApplicator
 
 from config import VCR_ANNOTS_DIR
-from data.omcs.extract_omcs_features import load_omcs_embeddings, normalize_embedding
+from data.omcs.extract_omcs_features import load_omcs_embeddings
 from models.multiatt.kv_transformer import KeyValueTransformer
 
 logging.basicConfig(level=logging.INFO)
@@ -171,7 +171,7 @@ class KeyValueAttentionTrunk(Model):
         return torch.from_numpy(embs), index
 
     def normalize_embedding(self, embs):
-        return embs / torch.norm(embs, dim=1).view(-1, 1)
+        return embs / (torch.norm(embs, dim=1).view(-1, 1) + 1e-10)
 
     def attended_omcs_embeddings(self, vcr_embs):
         projected_embs = self.normalize_embedding(
