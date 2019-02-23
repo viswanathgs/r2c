@@ -14,6 +14,7 @@ from allennlp.nn import InitializerApplicator
 
 import models
 from models.multiatt.model import AttentionQATrunk
+from models.multiatt.model_kv import KeyValueAttentionTrunk
 import logging
 
 logging.basicConfig(level=logging.INFO)

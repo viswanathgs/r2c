@@ -11,17 +11,7 @@
       "num_layers": 1,
       "bidirectional": true
     },
-    "reasoning_encoder": {
-      "type": "lstm",
-      "input_size": 1536,
-      "hidden_size": 256,
-      "num_layers": 2,
-      "bidirectional": true
-    },
-    "hidden_dim_maxpool": 1024,
     "input_dropout": 0.3,
-    "pool_question": true,
-    "pool_answer": true,
     "initializer": [
     [".*mlp.*weight", {"type": "xavier_uniform"}],
     [".*mlp.*bias", {"type": "zero"}],
@@ -38,7 +28,7 @@
     },
     "validation_metric": "+accuracy",
     "num_serialized_models_to_keep": 2,
-    "num_epochs": 20,
+    "num_epochs": 30,
     "grad_norm": 1.0,
     "patience": 3,
     "cuda_device": 0,
