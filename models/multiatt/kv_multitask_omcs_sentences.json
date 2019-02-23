@@ -4,7 +4,7 @@
     "use_precomputed_omcs": false
   },
   "model": {
-    "type": "MultiTaskKeyValueAttention",
+    "type": "KeyValueMultiTaskAttention",
     "span_encoder": {
       "type": "lstm",
       "input_size": 2048,
