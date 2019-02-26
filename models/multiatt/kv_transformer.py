@@ -71,7 +71,7 @@ class KeyValueTransformer(Model):
         qt = q_rep
         o_key, o_val = o_rep.chunk(2, dim=2)
         a_key, a_val = a_rep.chunk(2, dim=2)
-        # TODO slog add and norm
+        # TODO: add and norm
         for i in range(self.num_steps):
             qt, o_alpha = self.multi_head_attention(qt, o_key, o_val, self.Wo)
             qt, a_alpha = self.multi_head_attention(qt, a_key, a_val, self.Wa)
